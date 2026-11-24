@@ -55,8 +55,9 @@ export const NETS: Record<Net, NetConfig> = {
     tee: false,
   },
   devnet: {
-    base: "https://api.devnet.solana.com",
-    baseWs: "wss://api.devnet.solana.com",
+    // MagicBlock's free devnet RPC: the public api.devnet.solana.com rate-limits hard (429s).
+    base: "https://rpc.magicblock.app/devnet",
+    baseWs: "wss://rpc.magicblock.app/devnet",
     er: "https://devnet-tee.magicblock.app",
     erWs: "wss://devnet-tee.magicblock.app",
     validator: new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo"),
