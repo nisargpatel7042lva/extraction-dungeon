@@ -23,7 +23,7 @@ import { connectPhantom, devWallet, hasPhantom, sessionKey } from "./wallet";
 import { Bot, BotLevel, LEVELS } from "./bot";
 import bs58 from "bs58";
 import { initGuide } from "./guide";
-import { isMuted, setMuted, sfx } from "./sound";
+import { isMuted, music, setMuted, sfx } from "./sound";
 
 // ---------- setup ----------
 
@@ -211,6 +211,8 @@ function setMode(mode: "landing" | "live") {
   document.body.classList.toggle("mode-live", mode === "live");
   document.body.classList.toggle("mode-landing", mode === "landing");
   stage.hidden = mode !== "live";
+  if (mode === "live") music.start();
+  else music.stop();
   const h = (document.querySelector(".topbar") as HTMLElement).offsetHeight;
   document.documentElement.style.setProperty("--topbar-h", `${h}px`);
 }
@@ -219,13 +221,67 @@ window.addEventListener("resize", () => {
   document.documentElement.style.setProperty("--topbar-h", `${h}px`);
 });
 
-const muteBtn = $("mute");
-const renderMute = () => (muteBtn.textContent = isMuted() ? "🔇" : "🔊");
-muteBtn.addEventListener("click", () => {
-  setMuted(!isMuted());
-  renderMute();
+// Sprites for every seat up front: the lobby and HUD rebuild often, and a hero image that first
+// loads mid-rebuild (the 4th seat is often the first time hero3 is needed) shows up blank.
+for (let i = 0; i < 4; i++) new Image().src = `/sprites/hero${i}.png`;
+
+// ---------- sound, music and fullscreen toggles (topbar + in-game HUD) ----------
+
+function renderToggles() {
+  document.querySelectorAll<HTMLElement>("[data-act=mute]").forEach((b) => (b.textContent = isMuted() ? "🔇" : "🔊"));
+  document.querySelectorAll<HTMLElement>("[data-act=music]").forEach((b) => b.classList.toggle("off", !music.isOn()));
+  document.querySelectorAll<HTMLElement>("[data-act=fs]").forEach((b) => {
+    b.hidden = !fsSupported();
+    b.textContent = document.fullscreenElement ? "🗗" : "⛶";
+    b.title = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+  });
+}
+
+// Fullscreen by default: browsers only allow it from a user gesture, so the first tap, click or key
+// press anywhere goes fullscreen. If the player leaves it (Esc, or the button), we respect that
+// until they press the fullscreen button again.
+const fsSupported = () => !!document.documentElement.requestFullscreen && document.fullscreenEnabled !== false;
+let fsOptOut = false;
+function enterFullscreen() {
+  if (!fsSupported() || document.fullscreenElement) return;
+  document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+}
+["pointerdown", "keydown"].forEach((ev) =>
+  window.addEventListener(
+    ev,
+    (e) => {
+      if (fsOptOut || (e as KeyboardEvent).key === "Escape") return;
+      if ((e.target as HTMLElement)?.closest?.("[data-act=fs]")) return; // the button handles itself
+      enterFullscreen();
+    },
+    { passive: true },
+  ),
+);
+let fsWasOn = false;
+document.addEventListener("fullscreenchange", () => {
+  if (fsWasOn && !document.fullscreenElement) fsOptOut = true; // the player left fullscreen on purpose
+  fsWasOn = !!document.fullscreenElement;
+  renderToggles();
 });
-renderMute();
+
+document.addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest?.<HTMLElement>("[data-act]");
+  if (!b) return;
+  const act = b.dataset.act;
+  if (act === "mute") setMuted(!isMuted());
+  else if (act === "music") music.setOn(!music.isOn());
+  else if (act === "fs") {
+    if (document.fullscreenElement) {
+      fsOptOut = true;
+      void document.exitFullscreen();
+    } else {
+      fsOptOut = false;
+      enterFullscreen();
+    }
+  }
+  renderToggles();
+});
+renderToggles();
 
 // ---------- screens ----------
 
@@ -436,7 +492,7 @@ function seatsHtml(s: RunState, compact = false) {
         const stat = s.status === Status.Lobby ? "" : `<span class="muted">${compact ? "" : "bag "}${bag} · ♥${p.hp} · ⚔${p.kills}</span>`;
         const bot = botAt(i);
         const name = i === me ? "you" : bot ? `🤖 ${LEVELS[bot.level].label} bot` : short(p.wallet);
-        return `<div class="seat"><span class="dot" style="background:${col}"></span><span class="${bot ? "" : "mono"}">${name}</span>${tag}<span style="margin-left:auto">${stat}</span></div>`;
+        return `<div class="seat"><span class="dot" style="background:${col}"></span><span class="nm ${i === me ? "you" : bot ? "" : "mono"}">${name}</span>${tag}<span style="margin-left:auto">${stat}</span></div>`;
       })
       .join("") || `<p class="muted">Nobody yet.</p>`
   );
@@ -447,6 +503,7 @@ function lobbyExpired(s: RunState) {
   return chainClock.now() >= Number(s.createdAt.toString()) + LOBBY_TIMEOUT_SECS;
 }
 
+let lastLobbyHtml = "";
 function showLobby() {
   const s = state!;
   setMode("landing");
@@ -459,12 +516,11 @@ function showLobby() {
         return `<div class="slot empty"><span class="pn">P${i + 1}</span><small class="blink">INSERT<br/>COIN</small><span></span></div>`;
       const p = s.players[i];
       const bot = botAt(i);
-      const name = i === me ? "YOU" : bot ? `CPU · ${LEVELS[bot.level].label}` : short(p.wallet);
+      const name = i === me ? "YOU" : bot ? `CPU<br/>${LEVELS[bot.level].label}` : short(p.wallet);
       return `<div class="slot ${i === me ? "me" : ""}"><span class="pn" style="color:${col}">P${i + 1}</span><img src="/sprites/hero${i}.png" alt="" /><span class="nm">${name}</span></div>`;
     })
     .join("");
-  screen.className = "card";
-  screen.innerHTML = `
+  const html = `
     <h2>Player select</h2>
     <p class="stage-name">STAGE ${MAP.layout + 1} · <b class="neon-cyan">${MAP.name}</b></p>
     <div class="pot">
@@ -472,7 +528,7 @@ function showLobby() {
       <div><small>ENTRY</small><b>${sol(s.entryLamports)}</b></div>
       <div><small>TIMER</small><b>${clock(s.durationSecs)}</b></div>
     </div>
-    <div class="slots">${slots}</div>
+    <div class="slots" data-lobby>${slots}</div>
     <div class="row">
       ${me < 0 && s.playerCount < 4 ? `<button id="join" class="big">Join · ${sol(s.entryLamports)} SOL</button>` : ""}
       ${isHost ? `<button id="start" class="big green ${s.playerCount > 1 ? "blink-btn" : ""}" ${s.playerCount ? "" : "disabled"}>Start game</button>` : ""}
@@ -498,6 +554,11 @@ function showLobby() {
           ? `<p class="muted" style="font-size:16px">If the host never starts, anyone can cancel and refund every stake from ${new Date((Number(s.createdAt.toString()) + LOBBY_TIMEOUT_SECS) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>`
           : ""
     }`;
+  // Chain updates re-render the lobby often; skipping identical rebuilds keeps sprites from flashing.
+  if (screen.querySelector("[data-lobby]") && lastLobbyHtml === html) return;
+  lastLobbyHtml = html;
+  screen.className = "card";
+  screen.innerHTML = html;
   $("cancel")?.addEventListener("click", () =>
     guarded("Cancel", async () => {
       if (!confirm("Cancel this lobby and refund every stake?")) return;
@@ -632,6 +693,11 @@ function renderHud() {
       ${active ? `<div class="stat"><small>Attack</small><div class="meter"><i></i></div></div>` : ""}
     </div>
     <div class="hud-box hud-side"><div class="muted roster-title">Players</div>${seatsHtml(s, true)}</div>
+    <div class="hud-tools">
+      <button class="ghost small icon" data-act="mute" aria-label="Sound"></button>
+      <button class="ghost small icon" data-act="music" aria-label="Music">♪</button>
+      <button class="ghost small icon" data-act="fs" aria-label="Fullscreen"></button>
+    </div>
     <div class="hud-msg"><div class="hud-box">
       ${msg}
       ${canEnd ? `<button id="end" class="small">End run</button>` : ""}
@@ -646,6 +712,9 @@ function renderHud() {
     }),
   );
   document.getElementById("touch-extract")?.classList.toggle("locked", xIn > 0 || !active);
+  renderToggles();
+  // The phone layout sizes the dungeon around the HUD (portrait), so publish its height.
+  document.documentElement.style.setProperty("--hud-h", `${hud.offsetHeight}px`);
 }
 
 // Tick the clock, exits countdown and attack meter in place: rebuilding the HUD would swallow clicks.
@@ -670,6 +739,7 @@ setInterval(() => {
   if (x) x.textContent = xIn ? clock(xIn) : "OPEN";
   hud.querySelectorAll(".xin").forEach((e) => (e.textContent = clock(xIn)));
   if (left > 0 && left <= 10) sfx.tick();
+  music.setHurry(left > 0 && left <= 30);
 }, 1000);
 setInterval(() => {
   const bar = hud.querySelector<HTMLElement>(".meter i");

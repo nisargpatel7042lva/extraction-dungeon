@@ -1,0 +1,11 @@
+{
+  "name": "Extraction Dungeon",
+  "short_name": "Dungeon",
+  "description": "Staked real-time PvP dungeon on a MagicBlock Private Ephemeral Rollup.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0d0b12",
+  "theme_color": "#0d0b12",
+  "icons": [{ "src": "/sprites/chest_closed.png", "sizes": "256x256", "type": "image/png", "purpose": "any" }]
+}

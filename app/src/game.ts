@@ -12,7 +12,9 @@ export const SEAT_COLORS = [0x5ab0ff, 0xff6ad5, 0xffa24a, 0xc9f24a];
 export const TIER_COLORS: Record<number, number> = { 1: 0x9aa0ad, 2: 0x5ab0ff, 3: 0xf5c04a };
 const UNKNOWN_TIER = 0x6b6280; // an opened chest someone else looted: you don't get to know what was in it
 const VAULT_GOLD = 0xf5c04a;
-const MIN_TILE_PX = 36; // never draw tiles smaller than this on screen; follow the player instead
+// Never draw tiles smaller than this on screen; follow the player instead. Touch screens are held close,
+// so they go smaller: that fits the whole dungeon on a landscape phone.
+const MIN_TILE_PX = matchMedia("(pointer: coarse)").matches ? 26 : 36;
 
 const FLOOR_SPAN = TILE * 4; // one floor texture covers 4x4 tiles
 const WALL_SPAN = TILE * 2; // one wall texture covers 2x2 tiles
@@ -139,7 +141,8 @@ export class DungeonScene extends Phaser.Scene {
       this.followingSeat = -1;
     } else {
       cam.setBounds(0, 0, WORLD_W, WORLD_H);
-      cam.setZoom(Math.max(fit, MIN_TILE_PX / TILE));
+      // Fill the screen height (portrait phones) and scroll sideways with your knight.
+      cam.setZoom(Math.max(MIN_TILE_PX / TILE, height / WORLD_H));
       this.following = true;
       this.followMe();
     }

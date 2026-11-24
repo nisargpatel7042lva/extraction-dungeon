@@ -7,6 +7,11 @@
     <meta name="description" content="Stake SOL, loot the dungeon, fight other players, and get out alive. Real-time PvP on a MagicBlock Private Ephemeral Rollup." />
     <title>Extraction Dungeon</title>
     <link rel="icon" href="/sprites/chest_closed.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/sprites/chest_closed.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Silkscreen&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/style.css" />
@@ -16,7 +21,9 @@
       <a class="logo" href="/">EXTRACTION<span>DUNGEON</span></a>
       <nav class="topnav">
         <button class="ghost small" data-guide>How to play</button>
-        <button class="ghost small icon" id="mute" aria-label="Toggle sound">🔊</button>
+        <button class="ghost small icon" data-act="mute" aria-label="Toggle sound">🔊</button>
+        <button class="ghost small icon" data-act="music" aria-label="Toggle music">♪</button>
+        <button class="ghost small icon" data-act="fs" aria-label="Fullscreen">⛶</button>
         <div id="wallet"></div>
       </nav>
     </header>
