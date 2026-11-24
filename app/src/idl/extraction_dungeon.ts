@@ -182,6 +182,10 @@ export type ExtractionDungeon = {
         {
           "name": "durationSecs",
           "type": "u32"
+        },
+        {
+          "name": "layout",
+          "type": "u8"
         }
       ]
     },
@@ -1692,6 +1696,13 @@ export type ExtractionDungeon = {
           },
           {
             "name": "vaultBump",
+            "type": "u8"
+          },
+          {
+            "name": "layout",
+            "docs": [
+              "Which of `map::MAPS` this run is played on (picked by the client at creation)."
+            ],
             "type": "u8"
           }
         ]

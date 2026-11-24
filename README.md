@@ -13,7 +13,8 @@ Solana when the run ends.
 
 ## How a run works
 
-1. **Lobby (Solana).** A host opens a run with an entry stake and a timer. Up to 4 players join. Each stake goes into a
+1. **Lobby (Solana).** A host opens a run with an entry stake and a timer, on one of **five dungeon layouts**
+   (Crossroads, Pillars, Rooms, Serpent, Ring) picked at random, so no two rounds play the same. Up to 4 players join. Each stake goes into a
    program-owned **vault that never leaves the base layer**. Each player registers a browser **session key** and gets a
    **private Bag** account, delegated to the TEE rollup in the same transaction.
 2. **Private by default.** Each player's session key creates a permission on the rollup so **only it can read that Bag**.
@@ -113,6 +114,14 @@ flowchart LR
 | On screen | Your own moves are predicted instantly; chain state wins after 1.5 s if it disagrees |
 | VRF chest | ~0.7 s from open to tier in your bag |
 
+## Arcade look
+
+The site is styled as an arcade cabinet: CRT scanlines, neon pixel type (Press Start 2P / VT323), chunky
+buttons with procedural WebAudio blips, a **Player select** lobby (P1-P4, "insert coin" empty slots, CPU
+players), loading bars between chain hops, and a results screen with a score tally, a high-score table,
+**Claim winnings** with a coin shower and a PAID stamp, and **Play again**. The dungeon canvas fills
+any screen size and is centered; phones get a D-pad and an EXIT button.
+
 ## Playing solo: AI bots
 No one to play with? The host can add **Easy, Medium or Hard** bots from the lobby
 (`app/src/bot.ts`). A bot is a real seated player: the host's wallet funds a fresh bot wallet and the bot
@@ -139,7 +148,7 @@ scales everything into `app/public/sprites/`. The originals are in `art/raw/`.
 programs/extraction_dungeon/src/
   lib.rs     instructions + accounts
   state.rs   Run / PlayerSlot / Bag / Chest, payout math (+ unit tests)
-  map.rs     the 12x9 room, spawns, chests, exits (mirrored in the client)
+  map.rs     the five 20x13 layouts: walls, spawns, chests + Vault, exits (mirrored in the client)
 tests-magicsvm/tests/run.rs   end-to-end scenarios in MagicSVM (base + ER + VRF + permissions)
 app/
   src/chain.ts   all RPC and transaction building, TEE auth (shared with the scripts)

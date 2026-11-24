@@ -119,6 +119,8 @@ pub struct Run {
     pub settled: bool,
     pub bump: u8,
     pub vault_bump: u8,
+    /// Which of `map::MAPS` this run is played on (picked by the client at creation).
+    pub layout: u8,
 }
 
 /// One player's loot. Delegated to the TEE rollup with a permission that only that player's
@@ -244,6 +246,7 @@ mod tests {
             settled: false,
             bump: 0,
             vault_bump: 0,
+            layout: 0,
         };
         (run, points)
     }

@@ -15,6 +15,7 @@ import {
   WalletSigner,
   chainClock,
   exitsOpenAt,
+  useLayout,
 } from "./chain";
 import { DungeonScene, SEAT_COLORS, startGame } from "./game";
 import { connectPhantom, devWallet, hasPhantom, sessionKey } from "./wallet";
@@ -29,7 +30,8 @@ const params = new URLSearchParams(location.search);
 const isLocalHost = ["localhost", "127.0.0.1"].includes(location.hostname);
 const net = (params.get("net") ?? (isLocalHost ? "local" : "devnet")) as Net;
 const chain = new Chain(NETS[net]);
-chain.onActionError = (m) => {
+chain.onActionError = (m, signer) => {
+  if (!session || !signer.equals(session.publicKey)) return; // a CPU bumped into something: it re-plans
   if (/6022|0x1786/.test(m)) return; // attack cooldown: the meter already shows it
   toast(friendly(new Error(m)), true);
 };
@@ -142,6 +144,30 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const hexColor = (c: number) => "#" + c.toString(16).padStart(6, "0");
 const clock = (secs: number) => `${Math.floor(secs / 60)}:${String(Math.max(0, secs) % 60).padStart(2, "0")}`;
 
+/** Arcade coin shower over the whole page. */
+function coinRain(n: number) {
+  const box = document.createElement("div");
+  box.className = "coinrain";
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement("i");
+    c.style.left = `${Math.random() * 100}vw`;
+    c.style.animationDuration = `${1.4 + Math.random() * 1.6}s`;
+    c.style.animationDelay = `${Math.random() * 0.9}s`;
+    const size = 12 + Math.random() * 14;
+    c.style.width = c.style.height = `${size}px`;
+    box.appendChild(c);
+  }
+  document.body.appendChild(box);
+  for (let i = 0; i < 6; i++) setTimeout(() => sfx.coin(), i * 180);
+  setTimeout(() => box.remove(), 4000);
+}
+
+// Every button blips like a cabinet button (D-pad and EXIT have their own game sounds).
+document.addEventListener("click", (e) => {
+  const b = (e.target as HTMLElement).closest?.("button");
+  if (b && !b.disabled && !b.closest("#touch")) sfx.select();
+});
+
 function toast(msg: string, err = false) {
   const t = $("toast");
   t.textContent = msg;
@@ -210,12 +236,13 @@ function renderWallet() {
 
 function showConnect() {
   setMode("landing");
+  screen.className = "card";
   screen.innerHTML = `
-    <h2>Enter the dungeon</h2>
-    <p class="muted">Connect a wallet to open a run or join one from an invite link.</p>
+    <h2>▶ Press start</h2>
+    <p class="muted">Connect a wallet to open a run, or join one from an invite link.</p>
     <div class="row">
-      ${NETS[net].airdrop || params.has("dev") ? `<button id="dev">Play with a dev wallet</button>` : ""}
-      <button id="ph" class="${NETS[net].airdrop ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>
+      ${NETS[net].airdrop || params.has("dev") ? `<button id="dev" class="big">Dev wallet</button>` : ""}
+      <button id="ph" class="big ${NETS[net].airdrop || params.has("dev") ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>
       <button class="ghost" data-guide>How to play</button>
     </div>
     ${hasPhantom() ? "" : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>${isTouch ? " and open this page in Phantom's built-in browser" : ""}.</p>`}
@@ -233,21 +260,40 @@ async function connected(w: WalletSigner) {
 
 function showCreate() {
   setMode("landing");
+  screen.className = "card";
   screen.innerHTML = `
-    <h2>Open a run</h2>
-    <label>Entry stake (SOL)</label><input id="entry" type="number" min="0" step="0.01" value="0.05" inputmode="decimal" />
-    <label>Run length</label>
-    <div class="row" style="margin-top:0">
-      <button class="ghost small dur" data-d="120">2 min</button>
-      <button class="ghost small dur" data-d="180">3 min</button>
-      <button class="ghost small dur" data-d="300">5 min</button>
+    <h2>★ New game</h2>
+    <label>Insert coins · stake (SOL)</label>
+    <div class="chips" id="stakes">
+      ${["0", "0.01", "0.05", "0.1"].map((v) => `<button class="chip stake" data-v="${v}"><span class="coin"></span>${v === "0" ? "FREE" : v}</button>`).join("")}
+    </div>
+    <input id="entry" type="number" min="0" step="0.01" value="0.05" inputmode="decimal" style="margin-top:10px" aria-label="Custom stake" />
+    <label>Timer</label>
+    <div class="chips">
+      <button class="chip dur" data-d="120">2:00</button>
+      <button class="chip dur" data-d="180">3:00</button>
+      <button class="chip dur" data-d="300">5:00</button>
     </div>
     <input id="dur" type="hidden" value="180" />
-    <div class="row"><button id="create">Create run</button></div>
-    <p class="muted">You'll get a link to share with up to 3 friends. Join your own run to play in it.</p>`;
+    <div class="row"><button id="create" class="big pink">Create game</button></div>
+    <p class="muted">Share the invite link with up to 3 friends, or add CPU bots in the lobby. FREE runs are practice: no stake, just glory.</p>`;
+  const pickIn = (sel: string, b: HTMLButtonElement) => screen.querySelectorAll<HTMLButtonElement>(sel).forEach((x) => x.classList.toggle("on", x === b));
+  const stakes = [...screen.querySelectorAll<HTMLButtonElement>(".stake")];
+  stakes.forEach((b) =>
+    b.addEventListener("click", () => {
+      pickIn(".stake", b);
+      ($("entry") as HTMLInputElement).value = b.dataset.v!;
+      sfx.coin();
+    }),
+  );
+  ($("entry") as HTMLInputElement).addEventListener("input", (e) => {
+    const v = (e.target as HTMLInputElement).value;
+    stakes.forEach((x) => x.classList.toggle("on", Number(x.dataset.v) === Number(v)));
+  });
+  pickIn(".stake", stakes[2]);
   const durs = [...screen.querySelectorAll<HTMLButtonElement>(".dur")];
   const pick = (b: HTMLButtonElement) => {
-    durs.forEach((x) => (x.style.borderColor = x === b ? "var(--gold)" : ""));
+    pickIn(".dur", b);
     ($("dur") as HTMLInputElement).value = b.dataset.d!;
   };
   durs.forEach((b) => b.addEventListener("click", () => pick(b)));
@@ -296,6 +342,7 @@ function apply(s: RunState, isEr: boolean) {
   const wasLive = state?.status === Status.Live && onEr;
   state = s;
   onEr = isEr;
+  useLayout(s.layout ?? 0);
   if (s.status === Status.Lobby) return showLobby();
   if (s.status === Status.Live) {
     if (!isEr) return void waitForEr();
@@ -326,7 +373,8 @@ async function waitForEr() {
   waitingForEr = true;
   unsub?.();
   setMode("landing");
-  screen.innerHTML = `<h2>Opening the dungeon…</h2><p class="muted">Handing the run to the Private Ephemeral Rollup.</p>`;
+  screen.className = "card pink";
+  screen.innerHTML = `<div class="loading"><h2 class="blink">Loading stage…</h2><div class="bar"><i></i></div><p class="muted">Handing the dungeon to the Private Ephemeral Rollup.</p></div>`;
   try {
     // Any seated identity can set the run's public permission: you, or one of your bots.
     const setter = mySeat() >= 0 ? session : bots[0]?.session;
@@ -346,7 +394,8 @@ async function waitForBase() {
   bagUnsub?.();
   bagUnsub = null;
   setMode("landing");
-  screen.innerHTML = `<h2>Run over</h2><p class="muted">Committing the run and every bag back to Solana…</p>`;
+  screen.className = "card gold";
+  screen.innerHTML = `<div class="loading"><h2 class="blink">Counting the loot…</h2><div class="bar"><i></i></div><p class="muted">Committing the run and every bag back to Solana.</p></div>`;
   try {
     const s = await chain.waitForBase(runKey!, Status.Ended, 90_000, state?.playerCount ?? 0);
     apply(s, false);
@@ -379,32 +428,45 @@ function showLobby() {
   setMode("landing");
   const me = mySeat();
   const isHost = wallet!.publicKey.equals(s.authority);
+  const slots = [0, 1, 2, 3]
+    .map((i) => {
+      const col = hexColor(SEAT_COLORS[i]);
+      if (i >= s.playerCount)
+        return `<div class="slot empty"><span class="pn">P${i + 1}</span><small class="blink">INSERT<br/>COIN</small><span></span></div>`;
+      const p = s.players[i];
+      const bot = botAt(i);
+      const name = i === me ? "YOU" : bot ? `CPU · ${LEVELS[bot.level].label}` : short(p.wallet);
+      return `<div class="slot ${i === me ? "me" : ""}"><span class="pn" style="color:${col}">P${i + 1}</span><img src="/sprites/hero${i}.png" alt="" /><span class="nm">${name}</span></div>`;
+    })
+    .join("");
+  screen.className = "card";
   screen.innerHTML = `
-    <h2>Lobby</h2>
+    <h2>Player select</h2>
+    <p class="stage-name">STAGE ${MAP.layout + 1} · <b class="neon-cyan">${MAP.name}</b></p>
     <div class="pot">
-      <div><small class="muted">Pot</small><b>${sol(s.pot)}</b></div>
-      <div><small class="muted">Entry</small><b>${sol(s.entryLamports)}</b></div>
-      <div><small class="muted">Run</small><b>${clock(s.durationSecs)}</b></div>
+      <div><small>POT</small><b>${sol(s.pot)}</b></div>
+      <div><small>ENTRY</small><b>${sol(s.entryLamports)}</b></div>
+      <div><small>TIMER</small><b>${clock(s.durationSecs)}</b></div>
     </div>
-    ${seatsHtml(s)}
+    <div class="slots">${slots}</div>
     <div class="row">
-      ${me < 0 && s.playerCount < 4 ? `<button id="join">Join (${sol(s.entryLamports)} SOL)</button>` : ""}
-      ${isHost ? `<button id="start" ${s.playerCount ? "" : "disabled"}>Start run</button>` : ""}
-      <button id="copy" class="ghost">Copy invite link</button>
+      ${me < 0 && s.playerCount < 4 ? `<button id="join" class="big">Join · ${sol(s.entryLamports)} SOL</button>` : ""}
+      ${isHost ? `<button id="start" class="big green ${s.playerCount > 1 ? "blink-btn" : ""}" ${s.playerCount ? "" : "disabled"}>Start game</button>` : ""}
+      <button id="copy" class="ghost">Copy invite</button>
     </div>
     ${
       isHost && s.playerCount < 4
         ? `<div class="bots">
-            <div class="muted">No one to play with? Add an AI bot (it stakes the entry from your wallet; whatever it wins comes back to you):</div>
+            <label style="margin-top:0">No player 2? Add a CPU</label>
             <div class="bot-levels">
-              ${(Object.keys(LEVELS) as BotLevel[]).map((l) => `<button class="ghost bot-add" data-level="${l}"><b>🤖 ${LEVELS[l].label}</b><small>${LEVELS[l].blurb}</small></button>`).join("")}
+              ${(Object.keys(LEVELS) as BotLevel[]).map((l) => `<button class="ghost bot-add" data-level="${l}">+ CPU ${LEVELS[l].label}<small>${LEVELS[l].blurb}</small></button>`).join("")}
             </div>
+            <p class="muted" style="margin-bottom:0">CPUs stake from your wallet and everything they win comes back to you. They run in this tab, so keep it open.</p>
           </div>`
         : ""
     }
-    ${me >= 0 ? `<p class="muted">🔒 Your bag is private: only this browser tab can see what you carry.</p>` : ""}
-    ${bots.length ? `<p class="muted">🤖 Bots run in this browser tab: keep it open during the run.</p>` : ""}
-    ${isHost ? "" : `<p class="muted">Waiting for the host to start.</p>`}`;
+    ${me >= 0 ? `<p class="muted">🔒 Your bag is private: only this tab can see what you carry.</p>` : ""}
+    ${isHost ? "" : `<p class="muted blink">Waiting for the host to press start…</p>`}`;
   screen.querySelectorAll<HTMLButtonElement>(".bot-add").forEach((b) =>
     b.addEventListener("click", () =>
       guarded("Add bot", async () => {
@@ -610,38 +672,96 @@ async function showEnded() {
     if (!s.players[i].extracted) return 0;
     return total === 0 ? Math.floor(pot / extracted.length) : Math.floor((pot * points[i]) / total);
   };
-  const best = extracted.sort((a, b) => share(b.i) - share(a.i) || points[b.i] - points[a.i])[0];
-  const bestName = best ? (best.i === me ? "You" : who(best.i, best.p.wallet)) : "";
-  const banner = !best
-    ? `<p class="winner" style="color:var(--red)">Nobody got out</p>`
-    : pot === 0
-      ? `<p class="winner">${bestName} won the practice run with ${points[best.i]} pts</p>`
-      : `<p class="winner">${bestName} ${best.i === me ? "win" : "wins"} ${sol(share(best.i))} SOL</p>`;
+  const best = [...extracted].sort((a, b) => share(b.i) - share(a.i) || points[b.i] - points[a.i])[0];
+  const myShare = me >= 0 ? share(me) : 0;
+  const iWon = me >= 0 && s.players[me].extracted;
+  const iTopped = !!best && best.i === me;
+  const practice = pot === 0;
+  const title = !best
+    ? { t: "GAME OVER", cls: "neon-red", sub: "Nobody made it out. The pot goes to the house." }
+    : iWon
+      ? { t: iTopped ? (practice ? "STAGE CLEAR!" : "YOU WIN!") : "YOU ESCAPED!", cls: "neon-gold", sub: practice ? `Practice run · ${points[me]} pts banked` : "Extracted players split the pot by loot" }
+      : me >= 0
+        ? { t: "GAME OVER", cls: "neon-red", sub: s.players[me].alive ? "Trapped when the timer hit zero" : "You were slain in the dungeon" }
+        : { t: "RUN OVER", cls: "neon-pink", sub: `${who(best.i, best.p.wallet)} took the top prize` };
+
+  // High-score table: extracted players by payout, then everyone else by loot.
+  const order = s.players
+    .slice(0, s.playerCount)
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => Number(b.p.extracted) - Number(a.p.extracted) || share(b.i) - share(a.i) || points[b.i] - points[a.i]);
+  const rows = order
+    .map(({ p, i }, rank) => {
+      const fate = p.extracted ? `<span class="tag out">ESCAPED</span>` : !p.alive ? `<span class="tag dead">SLAIN</span>` : `<span class="tag dead">TRAPPED</span>`;
+      const r = p.extracted ? `<span class="rank r${rank + 1}">${["1ST", "2ND", "3RD", "4TH"][rank]}</span>` : `<span class="rank">--</span>`;
+      const name = i === me ? "YOU" : who(i, p.wallet).replace("🤖 ", "");
+      return `<tr class="${best && i === best.i ? "win" : ""} ${i === me ? "me" : ""}">
+        <td>${r}</td>
+        <td><span class="who"><img src="/sprites/hero${i}.png" alt="" />${name}</span></td>
+        <td>${fate}</td>
+        <td class="r">${points[i]}</td>
+        <td class="r">${p.extracted ? (practice ? "-" : sol(share(i))) : "0"}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const bigNumber = practice ? (me >= 0 ? points[me] : best ? points[best.i] : 0) : me >= 0 ? myShare : best ? share(best.i) : 0;
+  const bigUnit = practice ? "PTS" : "SOL";
+  screen.className = `card ${best && (iWon || me < 0) ? "gold" : "red"}`;
   screen.innerHTML = `
-    <h2>Run over</h2>
-    ${banner}`;
-  screen.innerHTML += `
-    ${s.players
-      .slice(0, s.playerCount)
-      .map((p, i) => {
-        const fate = p.extracted
-          ? `<span class="tag out">extracted · ${points[i]} pts</span>`
-          : !p.alive
-            ? `<span class="tag dead">slain</span>`
-            : `<span class="tag dead">trapped · lost ${points[i]} pts</span>`;
-        return `<div class="seat"><span class="dot" style="background:${hexColor(SEAT_COLORS[i])}"></span><span>${i === me ? "you" : who(i, p.wallet)}</span>${fate}<b style="margin-left:auto">${sol(share(i))} SOL</b></div>`;
-      })
-      .join("")}
-    <p class="muted">${extracted.length ? "Extracted players split the pot by loot points. Bags are revealed now that the run is over." : "The pot goes to the house."}</p>
-    <div class="row">
-      ${s.settled ? `<span class="tag out">Paid out</span>` : `<button id="settle">Settle payouts</button>`}
-      <button id="again" class="ghost">New run</button>
+    <div class="gameover">
+      <div class="go-title ${title.cls}">${title.t}</div>
+      <div class="go-sub">${title.sub}</div>
+      ${best && (iWon || me < 0) ? `<div class="payout-big"><span id="countup">0</span><small>${bigUnit}</small></div>` : ""}
+      <table class="scores">
+        <thead><tr><th>RANK</th><th>PLAYER</th><th>FATE</th><th class="r">PTS</th><th class="r">${practice ? "" : "SOL"}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="muted">🔓 Every bag is public now that the run is over.</p>
+      <div class="row" style="justify-content:center">
+        ${
+          s.settled
+            ? `<span class="stamp">PAID ✓</span>`
+            : `<button id="settle" class="big ${iWon && myShare > 0 ? "gold-btn blink-btn" : "cyan"}">${iWon && myShare > 0 ? "💰 Claim winnings" : "Settle payouts"}</button>`
+        }
+      </div>
+      <div class="row" style="justify-content:center">
+        <button id="again" class="big pink">▶ Play again</button>
+      </div>
+      <div class="continue blink">INSERT COIN TO CONTINUE</div>
     </div>`;
+
+  // Count the big number up like an arcade score tally.
+  const el = $("countup");
+  if (el) {
+    const target = bigNumber;
+    const fmt = (v: number) => (practice ? String(Math.round(v)) : sol(Math.round(v)));
+    const t0 = performance.now();
+    const dur = 1400;
+    const tick = (now: number) => {
+      const k = Math.min(1, (now - t0) / dur);
+      el.textContent = fmt(target * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) {
+        if (Math.random() < 0.35) sfx.tick();
+        requestAnimationFrame(tick);
+      }
+    };
+    requestAnimationFrame(tick);
+  }
+  if (iWon) sfx.win();
+  else if (me >= 0) sfx.lose();
+  if (s.settled && iWon && myShare > 0) coinRain(40);
+
   $("settle")?.addEventListener("click", () =>
     guarded("Settle", async () => {
-      ($("settle") as HTMLButtonElement).disabled = true;
+      const btn = $("settle") as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = "Paying out…";
       await chain.settleRun(wallet!, runKey!, s);
-      toast("Paid out");
+      sfx.coin();
+      if (iWon && myShare > 0) coinRain(60);
+      btn.outerHTML = `<span class="stamp">PAID ✓</span>`;
+      toast(iWon && myShare > 0 ? `${sol(myShare)} SOL sent to your wallet` : "Paid out");
       await returnSessionFunds();
       await returnBotFunds();
     }),
@@ -654,6 +774,7 @@ async function showEnded() {
     bots = [];
     revealedChests.clear();
     unsub?.();
+    scene?.resetRun();
     showCreate();
   });
 }

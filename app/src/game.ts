@@ -38,6 +38,10 @@ export class DungeonScene extends Phaser.Scene {
   private knownTiers = new Map<number, number>();
   private exitsWereOpen = false;
   private following = false;
+  /** Seat the camera is locked onto (-1: none yet, e.g. your hero wasn't drawn when it tried). */
+  private followingSeat = -1;
+  /** Which `MAPS` layout the scene was built for. */
+  private builtLayout = -1;
 
   constructor() {
     super("dungeon");
@@ -50,6 +54,18 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   create() {
+    // create() runs again on restart (new layout / new run): start from a clean slate.
+    this.players = [];
+    this.chests = [];
+    this.chestGlows = [];
+    this.sacks = [];
+    this.exits = [];
+    this.openingTweens.clear();
+    this.channelSince.clear();
+    this.knownTiers.clear();
+    this.exitsWereOpen = false;
+    this.followingSeat = -1;
+    this.builtLayout = MAP.layout;
     this.drawMap();
 
     MAP.CHESTS.forEach(([x, y], i) => {
@@ -90,11 +106,20 @@ export class DungeonScene extends Phaser.Scene {
       this.players.push(this.add.container(0, 0, [ring, body, hp, you]).setVisible(false).setDepth(10));
     }
 
-    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
-    this.scale.on("resize", () => this.fitCamera());
+    this.scale.off("resize", this.onResize, this);
+    this.scale.on("resize", this.onResize, this);
     this.fitCamera();
 
     if (this.state) this.render(null, this.state);
+  }
+
+  private onResize() {
+    this.fitCamera();
+  }
+
+  /** Rebuilds the dungeon for a new run (another layout, fresh chests and private tier memory). */
+  resetRun() {
+    if (this.sys?.isActive()) this.scene.restart();
   }
 
   /** Whole dungeon on screen when it fits with readable tiles; otherwise zoom in and follow you. */
@@ -104,11 +129,16 @@ export class DungeonScene extends Phaser.Scene {
     cam.setViewport(0, 0, width, height);
     const fit = Math.min(width / WORLD_W, height / WORLD_H);
     if (fit * TILE >= MIN_TILE_PX) {
+      // No bounds in fit mode: bounds clamp the scroll so a map narrower than the screen hugs the
+      // left edge. Without them, centerOn puts the dungeon in the middle of any aspect ratio.
+      cam.removeBounds();
       cam.setZoom(fit);
       cam.stopFollow();
       cam.centerOn(WORLD_W / 2, WORLD_H / 2);
       this.following = false;
+      this.followingSeat = -1;
     } else {
+      cam.setBounds(0, 0, WORLD_W, WORLD_H);
       cam.setZoom(Math.max(fit, MIN_TILE_PX / TILE));
       this.following = true;
       this.followMe();
@@ -118,8 +148,13 @@ export class DungeonScene extends Phaser.Scene {
   private followMe() {
     if (!this.following) return;
     const me = this.players[this.mySeat];
-    if (me?.visible) this.cameras.main.startFollow(me, true, 0.15, 0.15);
-    else this.cameras.main.centerOn(WORLD_W / 2, WORLD_H / 2);
+    if (me?.visible) {
+      this.cameras.main.startFollow(me, true, 0.15, 0.15);
+      this.followingSeat = this.mySeat;
+    } else {
+      this.cameras.main.centerOn(WORLD_W / 2, WORLD_H / 2);
+      this.followingSeat = -1;
+    }
   }
 
   update() {
@@ -158,6 +193,10 @@ export class DungeonScene extends Phaser.Scene {
     this.state = next;
     const seatChanged = mySeat !== this.mySeat;
     this.mySeat = mySeat;
+    if (this.sys?.isActive() && this.builtLayout !== MAP.layout) {
+      this.scene.restart(); // create() renders this.state on the new map
+      return;
+    }
     if (this.sys?.isActive() && this.players.length) {
       this.render(prev, next);
       if (seatChanged) this.followMe();
@@ -251,6 +290,9 @@ export class DungeonScene extends Phaser.Scene {
 
   private render(prev: RunState | null, s: RunState) {
     this.renderObjects(s);
+    this.time.delayedCall(0, () => {
+      if (this.following && this.followingSeat !== this.mySeat) this.followMe();
+    });
 
     for (let i = 0; i < 4; i++) {
       const c = this.players[i];
@@ -335,7 +377,21 @@ export function startGame(parent: HTMLElement): DungeonScene {
     backgroundColor: "#0d0b12",
     scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
     scene: [],
-    callbacks: { postBoot: (game) => game.scene.add("dungeon", scene, true) },
+    callbacks: {
+      postBoot: (game) => {
+        game.scene.add("dungeon", scene, true);
+        // Phaser's RESIZE mode only re-measures on window resizes. The stage box also changes size
+        // when the page layout shifts, which left the canvas stuck small with empty space to its
+        // right. Track the container itself (only once booted: resizing earlier breaks WebGL).
+        let last = `${game.scale.width}x${game.scale.height}`;
+        new ResizeObserver(() => {
+          const w = parent.clientWidth, h = parent.clientHeight;
+          if (!w || !h || `${w}x${h}` === last) return;
+          last = `${w}x${h}`;
+          game.scale.resize(w, h);
+        }).observe(parent);
+      },
+    },
   });
   return scene;
 }

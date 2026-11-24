@@ -51,6 +51,16 @@ fn randomness_for_roll(roll: u8) -> [u8; 32] {
     [roll - 1; 32]
 }
 
+thread_local! {
+    /// The layout of this test's run (each test runs on its own thread).
+    static LAYOUT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// The map this test's run is played on.
+fn m() -> map::Map {
+    map::get(LAYOUT.with(|l| l.get()))
+}
+
 /// BFS from `from` to any tile in `goals`, avoiding walls, chests and `blocked`. Returns directions.
 fn route(from: (u8, u8), goals: &[(u8, u8)], blocked: &[(u8, u8)]) -> Vec<u8> {
     let (w, h) = (map::W as usize, map::H as usize);
@@ -72,7 +82,7 @@ fn route(from: (u8, u8), goals: &[(u8, u8)], blocked: &[(u8, u8)]) -> Vec<u8> {
         }
         for d in 0..4u8 {
             if let Some(n) = map::step(cur.0, cur.1, d) {
-                if map::is_wall(n.0, n.1) || map::is_chest(n.0, n.1) || blocked.contains(&n) || seen[idx(n)] {
+                if m().is_wall(n.0, n.1) || m().is_chest(n.0, n.1) || blocked.contains(&n) || seen[idx(n)] {
                     continue;
                 }
                 seen[idx(n)] = true;
@@ -86,12 +96,12 @@ fn route(from: (u8, u8), goals: &[(u8, u8)], blocked: &[(u8, u8)]) -> Vec<u8> {
 
 /// Tiles next to a chest, and the direction from each tile into the chest.
 fn chest_sides(chest: usize) -> Vec<((u8, u8), u8)> {
-    let (cx, cy) = map::CHESTS[chest];
+    let (cx, cy) = m().chest(chest);
     (0..4u8)
         .filter_map(|d| {
             let from = map::step(cx, cy, d)?; // tile on side `d` of the chest
             let back = (d + 2) % 4; // direction from that tile into the chest
-            (!map::is_wall(from.0, from.1) && !map::is_chest(from.0, from.1)).then_some((from, back))
+            (!m().is_wall(from.0, from.1) && !m().is_chest(from.0, from.1)).then_some((from, back))
         })
         .collect()
 }
@@ -121,6 +131,11 @@ fn balance(svm: &MagicSVM, target: TransactionTarget, key: Pubkey) -> u64 {
 
 impl World {
     fn new(players: usize) -> Self {
+        Self::new_on(players, 0)
+    }
+
+    fn new_on(players: usize, layout: u8) -> Self {
+        LAYOUT.with(|l| l.set(layout));
         let authority = Keypair::new();
         let program = as_pubkey(&program_id_from_idl(env!("CARGO_MANIFEST_DIR"), "extraction_dungeon.json"));
         let mut svm = boot(env!("CARGO_MANIFEST_DIR"), "extraction_dungeon", as_address(program), &authority, 10 * LAMPORTS_PER_SOL);
@@ -131,7 +146,7 @@ impl World {
         let run_id = 7u64;
         let (run, _) = Pubkey::find_program_address(&[RUN_SEED, pk(&authority).as_ref(), &run_id.to_le_bytes()], &program);
         let (vault, _) = Pubkey::find_program_address(&[VAULT_SEED, run.as_ref()], &program);
-        let create = ix(program, ixs::CreateRun { run_id, entry_lamports: ENTRY, duration_secs: DURATION }, acc::CreateRun {
+        let create = ix(program, ixs::CreateRun { run_id, entry_lamports: ENTRY, duration_secs: DURATION, layout }, acc::CreateRun {
             authority: pk(&authority), run, vault, system_program: system_program::ID,
         });
         send_ixs(&mut svm, Base, &[&authority], [create], "create_run");
@@ -483,7 +498,7 @@ fn the_vault_never_rolls_common() {
 fn exits_are_locked_for_the_first_quarter_of_the_run() {
     let mut w = World::new(1);
     w.start();
-    w.walk_to(0, map::EXTRACTS[2]); // (9,1)
+    w.walk_to(0, m().extract(2)); // (9,1)
     let e = w.act(0, ixs::StartExtract {}).expect_err("locked early");
     assert!(err_code(&e, EXITS_LOCKED), "{e}");
     w.unlock_exits();
@@ -496,7 +511,7 @@ fn extraction_is_channeled_and_cancelled_by_moving() {
     let mut w = World::new(1);
     w.start();
     w.unlock_exits();
-    w.walk_to(0, map::EXTRACTS[2]);
+    w.walk_to(0, m().extract(2));
     let e = w.act(0, ixs::Extract {}).expect_err("must start first");
     assert!(err_code(&e, NOT_CHANNELING), "{e}");
     w.act(0, ixs::StartExtract {}).unwrap();
@@ -517,7 +532,7 @@ fn a_hit_interrupts_an_extraction() {
     let mut w = World::new(2);
     w.start();
     w.unlock_exits();
-    w.walk_to(0, map::EXTRACTS[0]); // (3,6)
+    w.walk_to(0, m().extract(0)); // (3,6)
     w.walk_to(1, (3, 5)); // right above it
     w.act(0, ixs::StartExtract {}).unwrap();
     w.advance_slots(EXTRACT_CHANNEL_SLOTS / 2);
@@ -563,7 +578,7 @@ fn death_drops_the_private_bag_killer_loots_it_extracts_and_takes_the_pot() {
     w.walk(1, &[UP]); // onto the sack
     assert_eq!(w.read_bag(Ephemeral, 1).points, 3);
     w.unlock_exits();
-    w.walk_to(1, map::EXTRACTS[0]);
+    w.walk_to(1, m().extract(0));
     w.extract(1).unwrap();
     let s1 = w.sessions[1].insecure_clone();
     w.end_as(&s1).unwrap();
@@ -620,9 +635,9 @@ fn extracted_players_split_by_points() {
     w.loot(0, 0, 10); // common, 1
     w.loot(1, 3, 80); // (16,11) rare, 3
     w.unlock_exits();
-    w.walk_to(0, map::EXTRACTS[2]);
+    w.walk_to(0, m().extract(2));
     w.extract(0).unwrap();
-    w.walk_to(1, map::EXTRACTS[3]);
+    w.walk_to(1, m().extract(3));
     w.extract(1).unwrap();
     let auth = w.authority.insecure_clone();
     w.end_as(&auth).unwrap();
@@ -630,4 +645,20 @@ fn extracted_players_split_by_points() {
     w.settle().unwrap();
     let gained: Vec<u64> = w.wallets.iter().zip(&before).map(|(k, b)| balance(&w.svm, Base, pk(k)) - b).collect();
     assert_eq!(gained, vec![3 * ENTRY / 4, 9 * ENTRY / 4, 0]);
+}
+
+#[test]
+fn every_map_plays_on_chain() {
+    // The program reads each map's tables on-chain: walk to an exit, loot a chest and extract on
+    // every layout, and check the run remembers which one it was created with.
+    for layout in 0..map::NUM_MAPS {
+        let mut w = World::new_on(1, layout);
+        assert_eq!(w.state(Base).layout, layout);
+        w.start();
+        w.loot(0, 0, 50);
+        w.unlock_exits();
+        w.walk_to(0, m().extract(3));
+        w.extract(0).unwrap_or_else(|e| panic!("{}: {e}", m().name()));
+        assert!(w.state(Ephemeral).players[0].extracted, "{}", m().name());
+    }
 }

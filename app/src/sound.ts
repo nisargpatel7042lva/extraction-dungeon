@@ -111,4 +111,18 @@ export const sfx = {
   exitsOpen: () => [262, 330, 392, 523].forEach((f, i) => tone(f, 0.25, { type: "sine", gain: 0.18, delay: i * 0.1 })),
   tick: () => tone(1000, 0.04, { type: "square", gain: 0.06 }),
   start: () => [196, 262, 330, 392].forEach((f, i) => tone(f, 0.14, { type: "square", gain: 0.14, delay: i * 0.08 })),
+  /** UI blip for buttons. */
+  select: () => tone(880, 0.04, { type: "square", gain: 0.05 }),
+  /** The classic coin-drop "bling". */
+  coin: () => {
+    tone(988, 0.07, { type: "square", gain: 0.14 });
+    tone(1319, 0.32, { type: "square", gain: 0.14, delay: 0.07 });
+  },
+  /** Victory fanfare. */
+  win: () => {
+    const seq = [523, 523, 523, 659, 784, 0, 659, 784, 1047];
+    seq.forEach((f, i) => f && tone(f, i === seq.length - 1 ? 0.6 : 0.12, { type: "square", gain: 0.16, delay: i * 0.11 }));
+  },
+  /** Game over: a descending wah-wah. */
+  lose: () => [392, 370, 349, 262].forEach((f, i) => tone(f, i === 3 ? 0.7 : 0.28, { type: "sawtooth", gain: 0.14, delay: i * 0.3, slideTo: i === 3 ? 200 : undefined })),
 };

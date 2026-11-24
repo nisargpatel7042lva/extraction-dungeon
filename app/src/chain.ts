@@ -82,35 +82,136 @@ export const ATTACK_COOLDOWN_MS = 420;
 /** Mirrors EXTRACT_CHANNEL_SLOTS (180 slots at ~11ms), plus a little slack for slot jitter. */
 export const EXTRACT_CHANNEL_MS = 2100;
 
-/** Mirrors programs/extraction_dungeon/src/map.rs. */
+/** Mirrors `MAPS` in programs/extraction_dungeon/src/map.rs. Each run is played on one of these. */
+export const MAPS: { name: string; LAYOUT: string[]; CHESTS: [number, number][]; EXTRACTS: [number, number][] }[] = [
+  {
+    name: "CROSSROADS",
+    LAYOUT: [
+      "####################",
+      "#....#........#....#",
+      "#.##.#..####..#.##.#",
+      "#..................#",
+      "###.##.##..##.##.###",
+      "#........##........#",
+      "#.#..#........#..#.#",
+      "#........##........#",
+      "###.##.##..##.##.###",
+      "#..................#",
+      "#.##.#..####..#.##.#",
+      "#....#........#....#",
+      "####################",
+    ],
+    CHESTS: [[3, 1], [16, 1], [3, 11], [16, 11], [5, 3], [14, 3], [5, 9], [14, 9], [1, 6], [18, 6], [9, 6]],
+    EXTRACTS: [[3, 6], [16, 6], [9, 1], [10, 11]],
+  },
+  {
+    name: "PILLARS",
+    LAYOUT: [
+      "####################",
+      "#..................#",
+      "#.#.#.#.#..#.#.#.#.#",
+      "#..................#",
+      "#.#.#.#.#..#.#.#.#.#",
+      "#..................#",
+      "#.#...#......#...#.#",
+      "#..................#",
+      "#.#.#.#.#..#.#.#.#.#",
+      "#..................#",
+      "#.#.#.#.#..#.#.#.#.#",
+      "#..................#",
+      "####################",
+    ],
+    CHESTS: [[4, 1], [15, 1], [4, 11], [15, 11], [3, 4], [16, 4], [3, 8], [16, 8], [3, 6], [16, 6], [9, 6]],
+    EXTRACTS: [[1, 6], [18, 6], [9, 3], [10, 9]],
+  },
+  {
+    name: "ROOMS",
+    LAYOUT: [
+      "####################",
+      "#....#........#....#",
+      "#....#........#....#",
+      "#....#.##..##.#....#",
+      "##.###.#....#.###.##",
+      "#..................#",
+      "#...##........##...#",
+      "#..................#",
+      "##.###.#....#.###.##",
+      "#....#.##..##.#....#",
+      "#....#........#....#",
+      "#....#........#....#",
+      "####################",
+    ],
+    CHESTS: [[4, 2], [15, 2], [4, 10], [15, 10], [8, 4], [11, 4], [8, 8], [11, 8], [2, 6], [17, 6], [9, 6]],
+    EXTRACTS: [[6, 6], [13, 6], [9, 1], [10, 11]],
+  },
+  {
+    name: "SERPENT",
+    LAYOUT: [
+      "####################",
+      "#...#..........#...#",
+      "#.#.#.###..###.#.#.#",
+      "#.#...#......#...#.#",
+      "#.###.#.####.#.###.#",
+      "#..................#",
+      "###.##.#....#.##.###",
+      "#..................#",
+      "#.###.#.####.#.###.#",
+      "#.#...#......#...#.#",
+      "#.#.#.###..###.#.#.#",
+      "#...#..........#...#",
+      "####################",
+    ],
+    CHESTS: [[3, 1], [16, 1], [3, 11], [16, 11], [7, 3], [12, 3], [7, 9], [12, 9], [3, 6], [16, 6], [9, 6]],
+    EXTRACTS: [[1, 5], [18, 5], [5, 1], [14, 11]],
+  },
+  {
+    name: "RING",
+    LAYOUT: [
+      "####################",
+      "#..................#",
+      "#.######....######.#",
+      "#.#..............#.#",
+      "#.#.####.##.####.#.#",
+      "#.....#......#.....#",
+      "##.#............#.##",
+      "#.....#......#.....#",
+      "#.#.####.##.####.#.#",
+      "#.#..............#.#",
+      "#.######....######.#",
+      "#..................#",
+      "####################",
+    ],
+    CHESTS: [[3, 3], [16, 3], [3, 9], [16, 9], [7, 5], [12, 5], [7, 7], [12, 7], [4, 6], [15, 6], [9, 6]],
+    EXTRACTS: [[2, 6], [17, 6], [9, 2], [10, 10]],
+  },
+];
+
+/** The map of the run being shown. Mutated in place by `useLayout`, so every module that imports
+ *  it sees the current run's dungeon. */
 export const MAP = {
   W: 20,
   H: 13,
-  LAYOUT: [
-    "####################",
-    "#....#........#....#",
-    "#.##.#..####..#.##.#",
-    "#..................#",
-    "###.##.##..##.##.###",
-    "#........##........#",
-    "#.#..#........#..#.#",
-    "#........##........#",
-    "###.##.##..##.##.###",
-    "#..................#",
-    "#.##.#..####..#.##.#",
-    "#....#........#....#",
-    "####################",
-  ],
-  CHESTS: [
-    [3, 1], [16, 1], [3, 11], [16, 11],
-    [5, 3], [14, 3], [5, 9], [14, 9],
-    [1, 6], [18, 6],
-    [9, 6],
-  ] as [number, number][],
-  /** Index of the Vault chest (rare or legendary only). */
+  layout: 0,
+  name: MAPS[0].name,
+  LAYOUT: [...MAPS[0].LAYOUT],
+  CHESTS: [...MAPS[0].CHESTS],
+  /** Index of the Vault chest (rare or legendary only). Last on every map. */
   VAULT: 10,
-  EXTRACTS: [[3, 6], [16, 6], [9, 1], [10, 11]] as [number, number][],
+  EXTRACTS: [...MAPS[0].EXTRACTS],
 };
+
+/** Switches `MAP` to a run's layout. Returns true if it changed. */
+export function useLayout(layout: number): boolean {
+  const i = ((layout % MAPS.length) + MAPS.length) % MAPS.length;
+  if (i === MAP.layout) return false;
+  const m = MAPS[i];
+  MAP.layout = i;
+  MAP.name = m.name;
+  MAP.LAYOUT = [...m.LAYOUT];
+  MAP.CHESTS = [...m.CHESTS];
+  MAP.EXTRACTS = [...m.EXTRACTS];
+  return true;
+}
 
 /** On-chain time as the program sees it. The rollup's Clock sysvar runs a few seconds off device
  *  clocks (measured ~2.5 s behind), so countdowns use `chainClock.now()` after `Chain.syncClock`. */
@@ -152,6 +253,8 @@ export interface RunState {
   chests: { state: number; tier: number; opener: number }[];
   dropped: { x: number; y: number; points: number; present: boolean }[];
   settled: boolean;
+  /** Index into `MAPS`. */
+  layout: number;
 }
 /** A seat's private loot. Readable on the TEE only by that seat's session key. */
 export interface BagState {
@@ -371,7 +474,7 @@ export class Chain {
   private erHash: { blockhash: string; lastValidBlockHeight: number; at: number } | null = null;
   private erHashFetch: Promise<unknown> | null = null;
   /** Called when a fire-and-forget ER action later turns out to have failed. */
-  onActionError: ((err: string) => void) | null = null;
+  onActionError: ((err: string, signer: PublicKey) => void) | null = null;
 
   /** ER blockhash, refreshed in the background so actions don't pay a round trip for it. */
   private async erBlockhash() {
@@ -405,7 +508,7 @@ export class Chain {
       if (r.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(r.value.err)}`);
     });
     if (confirm) await confirmed;
-    else confirmed.catch((e) => this.onActionError?.((e as Error).message));
+    else confirmed.catch((e) => this.onActionError?.((e as Error).message, session.publicKey));
     return sig;
   }
 
@@ -428,7 +531,7 @@ export class Chain {
     const runId = new BN(Date.now());
     const run = runPda(wallet.publicKey, runId);
     const ix = await this.program.methods
-      .createRun(runId, new BN(entryLamports), durationSecs)
+      .createRun(runId, new BN(entryLamports), durationSecs, Math.floor(Math.random() * MAPS.length))
       .accountsPartial({ authority: wallet.publicKey, run, vault: vaultPda(run) })
       .instruction();
     await this.sendBase(wallet, [ix]);

@@ -63,6 +63,7 @@ pub mod extraction_dungeon {
         run_id: u64,
         entry_lamports: u64,
         duration_secs: u32,
+        layout: u8,
     ) -> Result<()> {
         require!(duration_secs > 0, DungeonError::BadDuration);
         transfer(
@@ -80,6 +81,7 @@ pub mod extraction_dungeon {
         run.duration_secs = duration_secs;
         run.bump = ctx.bumps.run;
         run.vault_bump = ctx.bumps.vault;
+        run.layout = layout % map::NUM_MAPS;
         Ok(())
     }
 
@@ -215,8 +217,9 @@ pub mod extraction_dungeon {
         let i = acting_seat(run, &ctx.accounts.signer.key())?;
         let p = run.players[i];
         let (nx, ny) = map::step(p.x, p.y, dir).ok_or(DungeonError::BadDirection)?;
+        let m = map::get(run.layout);
         require!(
-            !map::is_wall(nx, ny) && !map::is_chest(nx, ny) && run.active_at(nx, ny).is_none(),
+            !m.is_wall(nx, ny) && !m.is_chest(nx, ny) && run.active_at(nx, ny).is_none(),
             DungeonError::Blocked
         );
         run.players[i].x = nx;
@@ -282,7 +285,7 @@ pub mod extraction_dungeon {
             require!(c < map::NUM_CHESTS, DungeonError::BadChest);
             require!(run.chests[c].state == ChestState::Closed as u8, DungeonError::ChestUnavailable);
             let p = run.players[i];
-            require!(map::adjacent((p.x, p.y), map::CHESTS[c]), DungeonError::NotAdjacent);
+            require!(map::adjacent((p.x, p.y), map::get(run.layout).chest(c)), DungeonError::NotAdjacent);
             run.chests[c].state = ChestState::Opening as u8;
             run.chests[c].opener = i as u8;
             i
@@ -339,7 +342,7 @@ pub mod extraction_dungeon {
         let run = &mut ctx.accounts.run;
         let i = acting_seat(run, &ctx.accounts.signer.key())?;
         let p = run.players[i];
-        require!(map::is_extract(p.x, p.y), DungeonError::NotOnExtract);
+        require!(map::get(run.layout).is_extract(p.x, p.y), DungeonError::NotOnExtract);
         require!(run.exits_open(Clock::get()?.unix_timestamp), DungeonError::ExitsLocked);
         run.players[i].extract_start_slot = Clock::get()?.slot.max(1);
         Ok(())
@@ -350,7 +353,7 @@ pub mod extraction_dungeon {
         let run = &mut ctx.accounts.run;
         let i = acting_seat(run, &ctx.accounts.signer.key())?;
         let p = run.players[i];
-        require!(map::is_extract(p.x, p.y), DungeonError::NotOnExtract);
+        require!(map::get(run.layout).is_extract(p.x, p.y), DungeonError::NotOnExtract);
         require!(p.extract_start_slot != 0, DungeonError::NotChanneling);
         require!(
             Clock::get()?.slot >= p.extract_start_slot.saturating_add(EXTRACT_CHANNEL_SLOTS),
