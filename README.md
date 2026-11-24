@@ -91,6 +91,12 @@ flowchart LR
 | On-chain, end to end | 9 moves landed in 1.56 s on devnet-as |
 | On screen | Your own moves are predicted instantly; chain state wins after 1.5 s if it disagrees |
 
+## Art
+The sprite set (four knights, chests, loot sack, exit portal, floor and wall textures) was generated with Figma's AI image
+generation in one consistent 16-bit style, each object on a flat magenta background. `app/scripts/sprites.ts` keys out the
+magenta (a pure-magenta key, so the pink knight's cloak survives), splits the 2×2 hero sheet into the four seats, trims and
+scales everything into `app/public/sprites/`. The originals are in `art/raw/`.
+
 ## Repository
 ```
 programs/extraction_dungeon/src/
@@ -103,6 +109,9 @@ app/
   src/main.ts    screens, input, prediction
   src/game.ts    Phaser scene drawn purely from on-chain state
   scripts/smoke.ts  full run over real RPC (NET=local | devnet)
+  scripts/sprites.ts  raw art -> game sprites
+  public/sprites/   the processed sprite set
+art/raw/     generated source images
 docs/        phase reports P0–P3 with test output
 ```
 

@@ -27,9 +27,9 @@ export async function connectPhantom(): Promise<WalletSigner> {
 }
 
 /** A throwaway keypair kept in sessionStorage: one per browser tab, so two tabs are two players.
- *  Local stack only (it airdrops itself). */
+ *  On the local stack it airdrops itself; on devnet (`?dev=1`, for testing) it must be funded externally. */
 export async function devWallet(chain: Chain): Promise<WalletSigner> {
-  const key = "ed:devwallet";
+  const key = `ed:devwallet:${chain.net.base}`;
   let kp: Keypair;
   const saved = sessionStorage.getItem(key);
   if (saved) kp = Keypair.fromSecretKey(bs58.decode(saved));
@@ -37,7 +37,7 @@ export async function devWallet(chain: Chain): Promise<WalletSigner> {
     kp = Keypair.generate();
     sessionStorage.setItem(key, bs58.encode(kp.secretKey));
   }
-  if ((await chain.base.getBalance(kp.publicKey)) < LAMPORTS_PER_SOL) {
+  if (chain.net.airdrop && (await chain.base.getBalance(kp.publicKey)) < LAMPORTS_PER_SOL) {
     const sig = await chain.base.requestAirdrop(kp.publicKey, 5 * LAMPORTS_PER_SOL);
     await chain.base.confirmTransaction(sig);
   }

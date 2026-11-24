@@ -81,7 +81,7 @@ function showConnect() {
     <p class="muted">Stake SOL, loot chests, fight other players, and get out alive. Whatever you extract with is yours.
     Every move runs on a MagicBlock Ephemeral Rollup, and VRF decides what's in each chest.</p>
     <div class="row">
-      ${NETS[net].airdrop ? `<button id="dev">Play with a dev wallet</button>` : ""}
+      ${NETS[net].airdrop || params.has("dev") ? `<button id="dev">Play with a dev wallet</button>` : ""}
       <button id="ph" class="${NETS[net].airdrop ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>
     </div>
     ${hasPhantom() ? "" : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`}
@@ -479,6 +479,9 @@ window.addEventListener("keydown", (e) => {
   },
   get sent() {
     return actionsSent;
+  },
+  get wallet() {
+    return wallet?.publicKey.toBase58();
   },
   get dropped() {
     return state?.dropped.filter((b) => b.present);
