@@ -1,24 +1,27 @@
-// End-to-end smoke test over real RPC: base validator + Ephemeral Rollup.
-//   NET=local npm run smoke      (default)   NET=devnet npm run smoke
-// Plays the same PvP scenario as the MagicSVM test, then probes VRF chests.
+// End-to-end smoke test over real RPC: base layer + (Private) Ephemeral Rollup.
+//   NET=devnet npx tsx scripts/smoke.ts      (local stack: NET=local, but commits/VRF don't work there)
+// Plays a PvP run with a VRF chest, checks bag privacy, the attack cooldown, and the exact payout.
 import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { readFileSync } from "fs";
 import { homedir } from "os";
-import { Chain, ChestState, Dir, NETS, Net, Status, keypairSigner } from "../src/chain";
+import { Chain, ChestState, Dir, NETS, Net, Status, TIER_NAMES, keypairSigner } from "../src/chain";
 
-const net = (process.env.NET ?? "local") as Net;
+const net = (process.env.NET ?? "devnet") as Net;
 const chain = new Chain(NETS[net]);
-// Devnet SOL is scarce: small stakes, wallets funded from the CLI wallet and swept back after.
 const ENTRY = net === "local" ? LAMPORTS_PER_SOL / 10 : LAMPORTS_PER_SOL / 100;
 const FUND = net === "local" ? 1 : 0.03;
 const { Up, Right, Down, Left } = Dir;
 
 const t0 = Date.now();
 const log = (...a: unknown[]) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+let failures = 0;
+const check = (ok: boolean, what: string) => {
+  log(`${ok ? "PASS" : "FAIL"} ${what}`);
+  if (!ok) failures++;
+};
 
-const cliWallet = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(readFileSync(`${homedir()}/.config/solana/id.json`, "utf8"))),
-);
+const cliWallet = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(`${homedir()}/.config/solana/id.json`, "utf8"))));
 const temps: Keypair[] = [];
 
 async function funded(sol: number): Promise<Keypair> {
@@ -26,8 +29,7 @@ async function funded(sol: number): Promise<Keypair> {
   temps.push(kp);
   const lamports = Math.round(sol * LAMPORTS_PER_SOL);
   if (NETS[net].airdrop) {
-    const sig = await chain.base.requestAirdrop(kp.publicKey, lamports);
-    await chain.base.confirmTransaction(sig);
+    await chain.base.confirmTransaction(await chain.base.requestAirdrop(kp.publicKey, lamports));
   } else {
     const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: cliWallet.publicKey, toPubkey: kp.publicKey, lamports }));
     await sendAndConfirmTransaction(chain.base, tx, [cliWallet]);
@@ -35,7 +37,6 @@ async function funded(sol: number): Promise<Keypair> {
   return kp;
 }
 
-/** Returns whatever is left in the throwaway wallets to the CLI wallet (devnet only). */
 async function sweep() {
   if (NETS[net].airdrop) return;
   let total = 0;
@@ -48,120 +49,115 @@ async function sweep() {
   log(`swept ${(total / LAMPORTS_PER_SOL).toFixed(4)} SOL back to the CLI wallet`);
 }
 
-/** Moves as the game sends them (fire-and-forget), timing how long each blocks the input queue,
- *  then waits until the ER state shows the final position (true end-to-end time). */
-async function timedMoves(session: Keypair, run: PublicKey, dirs: number[]) {
-  const seat = (await chain.fetchRun(run))!.state.players.findIndex((p) => p.signer.equals(session.publicKey));
-  let x = (await chain.fetchRun(run))!.state.players[seat].x, y = (await chain.fetchRun(run))!.state.players[seat].y;
-  const t0 = Date.now();
+const moveTimes: number[] = [];
+async function walk(session: Keypair, run: PublicKey, dirs: number[]) {
   for (const d of dirs) {
     const s = Date.now();
-    await chain.move(session, run, d, false);
+    await chain.move(session, run, 2, d);
     moveTimes.push(Date.now() - s);
-    x += [0, 1, 0, -1][d];
-    y += [-1, 0, 1, 0][d];
   }
-  for (;;) {
-    const p = (await chain.fetchRun(run))!.state.players[seat];
-    if (p.x === x && p.y === y) break;
-    if (Date.now() - t0 > 15_000) throw new Error(`seat ${seat} never reached (${x},${y}); at (${p.x},${p.y})`);
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  pathTimes.push(`${dirs.length} moves landed in ${Date.now() - t0}ms`);
 }
-const pathTimes: string[] = [];
-const moveTimes: number[] = [];
+
+async function pos(run: PublicKey, seat: number) {
+  const p = (await chain.fetchRun(run))!.state.players[seat];
+  return `(${p.x},${p.y})`;
+}
 
 async function main() {
-  log(`net=${net} program=${chain.program.programId.toBase58()}`);
+  log(`net=${net} er=${NETS[net].er} program=${chain.program.programId.toBase58()}`);
   const host = keypairSigner(await funded(FUND));
   const wallets = [await funded(FUND), await funded(FUND)];
   const sessions = [Keypair.generate(), Keypair.generate()];
+  temps.push(...sessions);
 
   const { run, runId } = await chain.createRun(host, ENTRY, 300);
   log("created run", run.toBase58());
-  for (let i = 0; i < 2; i++) await chain.joinRun(keypairSigner(wallets[i]), run, sessions[i].publicKey);
-  log("2 players joined, pot", (await chain.fetchRun(run))!.state.pot.toString());
+  for (let i = 0; i < 2; i++) {
+    const seat = await chain.joinRun(keypairSigner(wallets[i]), run, sessions[i].publicKey);
+    check(seat === i, `seat ${i} joined, bag delegated`);
+  }
+  for (let i = 0; i < 2; i++) await chain.ensureBagPermission(sessions[i], run, i);
+  log("bag permissions created on the ER (private to each session key)");
 
   await chain.startRun(host, run, runId);
+  await chain.ensureRunPermission(sessions[0], run);
   await chain.waitForEr(run);
-  log("delegated; ER sees the run live");
+  log("run delegated, public permission set, live on the ER");
 
-  // Seat 0: (1,1) -> (4,3). Seat 1: (10,7) -> (4,4).
-  await timedMoves(sessions[0], run, [Right, Left, Down, Down, Right, Right, Right]);
-  await timedMoves(sessions[1], run, [Up, Up, Left, Left, Left, Left, Left, Left, Up]);
+  // ---- privacy ----
+  check((await chain.fetchBag(run, 0, sessions[0])) !== null, "seat 0 can read its own bag");
+  check((await chain.fetchBag(run, 0, sessions[1])) === null, "seat 1 can NOT read seat 0's bag");
+  check((await chain.fetchBag(run, 0)) === null, "an anonymous viewer can NOT read seat 0's bag");
+  check((await chain.fetchRun(run)) !== null, "anyone can read the public run");
+
+  // ---- VRF chest on the TEE ----
+  await walk(sessions[0], run, [Right]);
+  const sent = Date.now();
+  await chain.openChest(sessions[0], run, 0, 0);
+  let bag0 = null;
+  for (let i = 0; i < 60; i++) {
+    const s = (await chain.fetchRun(run))!.state;
+    if (s.chests[0].state === ChestState.Opened) {
+      bag0 = await chain.fetchBag(run, 0, sessions[0]);
+      log(`VRF callback landed on the TEE after ${Date.now() - sent}ms: ${TIER_NAMES[bag0!.lastTier]}, bag ${bag0!.points} pts`);
+      check(s.chests[0].tier === 0, "chest tier is not public on the run");
+      break;
+    }
+    await sleep(250);
+  }
+  check(bag0 !== null && bag0.points > 0, "chest loot landed in seat 0's private bag");
+
+  // ---- fight with cooldown ----
+  await walk(sessions[0], run, [Left, Down, Down, Right, Right, Right]); // (4,3)
+  await walk(sessions[1], run, [Up, Up, Left, Left, Left, Left, Left, Left, Up]); // (4,4)
+  log(`positions: seat0 ${await pos(run, 0)} seat1 ${await pos(run, 1)}`);
+  await chain.attack(sessions[1], run, 2, Up);
+  let blocked = false;
+  try {
+    await chain.attack(sessions[1], run, 2, Up);
+  } catch (e) {
+    blocked = /6022|1786/.test((e as Error).message); // AttackCooldown = 6022 (0x1786)
+  }
+  check(blocked, "a second attack inside the cooldown is rejected");
+  await sleep(500);
+  await chain.attack(sessions[1], run, 2, Up);
+  await sleep(500);
+  await chain.attack(sessions[1], run, 2, Up);
   let s = (await chain.fetchRun(run))!.state;
-  log(`positions: seat0 (${s.players[0].x},${s.players[0].y}) seat1 (${s.players[1].x},${s.players[1].y})`);
+  check(!s.players[0].alive && s.dropped[0].present, "3 spaced hits kill; sack dropped");
+  check(s.dropped[0].points === 0, "sack contents are not public");
+  const victim = await chain.fetchBag(run, 0, sessions[0]);
+  check(victim?.dropped === bag0?.points && victim?.points === 0, `victim's loot moved into the sack (${victim?.dropped} pts)`);
 
-  for (let i = 0; i < 3; i++) await chain.attack(sessions[1], run, Up);
-  s = (await chain.fetchRun(run))!.state;
-  log(`after 3 hits: seat0 alive=${s.players[0].alive} dropped bag present=${s.dropped[0].present}`);
-
-  await timedMoves(sessions[1], run, [Up, Right]); // onto the bag, then extract tile (5,3)
+  await walk(sessions[1], run, [Up, Right]); // onto the sack, then the exit
+  const winnerBag = await chain.fetchBag(run, 1, sessions[1]);
+  check(winnerBag?.points === bag0?.points, `killer picked up the sack (${winnerBag?.points} pts)`);
   await chain.extract(sessions[1], run);
   log("seat1 extracted");
 
-  await chain.endRun(sessions[1], run);
-  log("end_run accepted on the ER");
-  try {
-    const final = await chain.waitForBase(run, Status.Ended, net === "local" ? 20_000 : 90_000);
-    log("committed back to base: status Ended, seat1 extracted =", final.players[1].extracted);
-    const before = await chain.base.getBalance(wallets[1].publicKey);
-    await chain.settleRun(host, run, final);
-    const gained = (await chain.base.getBalance(wallets[1].publicKey)) - before;
-    log(`settled: winner gained ${gained / LAMPORTS_PER_SOL} SOL (pot ${(2 * ENTRY) / LAMPORTS_PER_SOL})`);
-    if (gained !== 2 * ENTRY) throw new Error("payout mismatch");
-  } catch (e) {
-    if (net !== "local") throw e;
-    log("COMMIT NOT LANDED (known local-stack issue: ER 1.1.1 finalize tx rejected by local base) ->", (e as Error).message);
-  }
+  // ---- end + settle ----
+  await chain.endRun(sessions[1], run, 2);
+  const final = await chain.waitForBase(run, Status.Ended, 90_000, 2);
+  log("run + both bags committed back to base");
+  const publicBag = await chain.fetchBag(run, 1);
+  check(publicBag?.points === winnerBag?.points, "bags are public on base after the run");
+
+  const before = await chain.base.getBalance(wallets[1].publicKey);
+  await chain.settleRun(host, run, final);
+  const gained = (await chain.base.getBalance(wallets[1].publicKey)) - before;
+  check(gained === 2 * ENTRY, `winner paid exactly the pot (${gained / LAMPORTS_PER_SOL} SOL)`);
 
   const sorted = [...moveTimes].sort((a, b) => a - b);
-  log(`ER move send time (input queue blocked) over ${sorted.length} moves: p50 ${sorted[sorted.length >> 1]}ms, max ${sorted.at(-1)}ms`);
-  log(`end-to-end: ${pathTimes.join("; ")}`);
-
-  await vrfProbe(host);
-}
-
-/** Opens a chest on the ER and waits for the VRF callback. Ends the run afterwards. */
-async function vrfProbe(host: ReturnType<typeof keypairSigner>) {
-  const probe = await chain.createRun(host, 0, 300);
-  const pw = await funded(FUND);
-  const ps = Keypair.generate();
-  temps.push(ps);
-  await chain.joinRun(keypairSigner(pw), probe.run, ps.publicKey);
-  await chain.startRun(host, probe.run, probe.runId);
-  await chain.waitForEr(probe.run);
-  await chain.move(ps, probe.run, Right);
-  const sessBefore = await chain.er.getBalance(ps.publicKey);
-  const sent = Date.now();
-  try {
-    await chain.openChest(ps, probe.run, 0);
-    log("open_chest accepted on the ER; waiting for the VRF callback...");
-    let landed = false;
-    for (let i = 0; i < 60 && !landed; i++) {
-      const c = (await chain.fetchRun(probe.run))!.state.chests[0];
-      if (c.state === ChestState.Opened) {
-        landed = true;
-        const paid = sessBefore - (await chain.er.getBalance(ps.publicKey));
-        log(`VRF callback landed after ${Date.now() - sent}ms: tier ${c.tier}, bag ${(await chain.fetchRun(probe.run))!.state.players[0].bag}; session key paid ${paid} lamports on the ER`);
-      } else await new Promise((r) => setTimeout(r, 250));
-    }
-    if (!landed) log("VRF: request accepted but no callback within 15s");
-  } catch (e) {
-    log("VRF: open_chest rejected:", (e as Error).message.slice(0, 300));
-  }
-  // The host may end at any time; this also returns the probe run to base.
-  const hostKp = temps[0];
-  await chain.endRun(hostKp, probe.run).catch((e) => log("probe end_run failed:", (e as Error).message.slice(0, 200)));
+  log(`ER move send+confirm over ${sorted.length} moves: p50 ${sorted[sorted.length >> 1]}ms, max ${sorted.at(-1)}ms`);
 }
 
 main()
   .catch((e) => {
     console.error("SMOKE FAILED:", e);
-    process.exitCode = 1;
+    failures++;
   })
   .finally(async () => {
     await sweep().catch(() => {});
-    process.exit(process.exitCode ?? 0);
+    log(failures ? `${failures} check(s) FAILED` : "all checks passed");
+    process.exit(failures ? 1 : 0);
   });

@@ -15,7 +15,9 @@ export type ExtractionDungeon = {
     {
       "name": "attack",
       "docs": [
-        "ER. Hits the active player on the adjacent tile in `dir` for 1 damage."
+        "ER. Hits the active player on the adjacent tile in `dir` for 1 damage, at most once per",
+        "ATTACK_COOLDOWN_SLOTS. A kill drops the victim's whole bag on their tile.",
+        "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
         197,
@@ -47,8 +49,8 @@ export type ExtractionDungeon = {
     {
       "name": "callbackOpenChest",
       "docs": [
-        "VRF callback. Puts the loot in the opener's bag, or in their dropped bag if they",
-        "died while the chest was opening."
+        "VRF callback. The tier goes into the opener's private Bag; the Run only learns \"opened\".",
+        "Loot goes into the opener's bag, or their sack if they died while it was opening."
       ],
       "discriminator": [
         229,
@@ -68,6 +70,10 @@ export type ExtractionDungeon = {
         },
         {
           "name": "run",
+          "writable": true
+        },
+        {
+          "name": "bag",
           "writable": true
         }
       ],
@@ -94,7 +100,8 @@ export type ExtractionDungeon = {
     {
       "name": "createRun",
       "docs": [
-        "Base. Creates an empty lobby and its stake vault."
+        "Base. Creates an empty lobby and its stake vault. The run PDA is pre-funded with rent for",
+        "its (public) ephemeral permission, created on the TEE after delegation."
       ],
       "discriminator": [
         195,
@@ -175,6 +182,185 @@ export type ExtractionDungeon = {
         {
           "name": "durationSecs",
           "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "delegateBag",
+      "docs": [
+        "Base. Hands a seat's Bag to the (TEE) ER validator. Sent in the same tx as `join_run`."
+      ],
+      "discriminator": [
+        192,
+        37,
+        169,
+        135,
+        248,
+        198,
+        31,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "run"
+        },
+        {
+          "name": "bufferBag",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                23,
+                211,
+                148,
+                191,
+                186,
+                102,
+                74,
+                25,
+                65,
+                175,
+                191,
+                130,
+                140,
+                214,
+                93,
+                39,
+                9,
+                169,
+                226,
+                113,
+                133,
+                36,
+                85,
+                234,
+                56,
+                84,
+                145,
+                81,
+                75,
+                175,
+                116,
+                142
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegationRecordBag",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegationProgram"
+            }
+          }
+        },
+        {
+          "name": "delegationMetadataBag",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegationProgram"
+            }
+          }
+        },
+        {
+          "name": "bag",
+          "writable": true
+        },
+        {
+          "name": "ownerProgram",
+          "address": "2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw"
+        },
+        {
+          "name": "delegationProgram",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seat",
+          "type": "u8"
         }
       ]
     },
@@ -377,9 +563,9 @@ export type ExtractionDungeon = {
     {
       "name": "endRun",
       "docs": [
-        "ER. Ends the run and commits + undelegates it to base. Allowed for the authority at",
-        "any time, or for anyone once the clock has run out or every player is dead/extracted.",
-        "Players still inside when it ends are trapped: their loot is lost."
+        "ER. Ends the run and commits + undelegates the run and every Bag to base. Allowed for the",
+        "authority at any time, or for anyone once the clock has run out or everyone is resolved.",
+        "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
         3,
@@ -441,10 +627,230 @@ export type ExtractionDungeon = {
       "args": []
     },
     {
+      "name": "initBagPermission",
+      "docs": [
+        "ER. Makes a seat's Bag private: only that seat's session key can read it via the TEE.",
+        "Idempotent. Paid from the rent the Bag was pre-funded with at join."
+      ],
+      "discriminator": [
+        180,
+        7,
+        216,
+        20,
+        111,
+        41,
+        203,
+        17
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run"
+        },
+        {
+          "name": "bag",
+          "writable": true
+        },
+        {
+          "name": "permission",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  58
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                136,
+                161,
+                10,
+                196,
+                33,
+                152,
+                1,
+                214,
+                246,
+                106,
+                29,
+                60,
+                6,
+                152,
+                192,
+                102,
+                169,
+                175,
+                212,
+                217,
+                180,
+                252,
+                231,
+                71,
+                151,
+                141,
+                209,
+                5,
+                168,
+                212,
+                103,
+                82
+              ]
+            }
+          }
+        },
+        {
+          "name": "permissionProgram",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "ephemeralVault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magicProgram",
+          "address": "Magic11111111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seat",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "initRunPermission",
+      "docs": [
+        "ER. Gives the Run a public permission so every authenticated TEE client can read it.",
+        "Idempotent; anyone can call it."
+      ],
+      "discriminator": [
+        166,
+        36,
+        211,
+        108,
+        91,
+        255,
+        221,
+        235
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        },
+        {
+          "name": "permission",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  58
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                136,
+                161,
+                10,
+                196,
+                33,
+                152,
+                1,
+                214,
+                246,
+                106,
+                29,
+                60,
+                6,
+                152,
+                192,
+                102,
+                169,
+                175,
+                212,
+                217,
+                180,
+                252,
+                231,
+                71,
+                151,
+                141,
+                209,
+                5,
+                168,
+                212,
+                103,
+                82
+              ]
+            }
+          }
+        },
+        {
+          "name": "permissionProgram",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "ephemeralVault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magicProgram",
+          "address": "Magic11111111111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "joinRun",
       "docs": [
-        "Base. Seats the wallet, takes its stake into the vault, and funds + registers the",
-        "browser session key that will sign its actions inside the ER."
+        "Base. Seats the wallet, takes its stake into the vault, funds + registers the browser",
+        "session key, and creates this seat's private Bag (pre-funded for its permission)."
       ],
       "discriminator": [
         72,
@@ -493,6 +899,10 @@ export type ExtractionDungeon = {
           "writable": true
         },
         {
+          "name": "bag",
+          "writable": true
+        },
+        {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
         }
@@ -507,8 +917,8 @@ export type ExtractionDungeon = {
     {
       "name": "movePlayer",
       "docs": [
-        "ER. One grid step. `dir`: 0 up, 1 right, 2 down, 3 left.",
-        "Stepping onto a dropped bag picks it up."
+        "ER. One grid step. `dir`: 0 up, 1 right, 2 down, 3 left. Stepping onto sacks loots them.",
+        "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
         17,
@@ -540,8 +950,7 @@ export type ExtractionDungeon = {
     {
       "name": "openChest",
       "docs": [
-        "ER. Starts opening an adjacent chest; VRF decides the tier in `callback_open_chest`.",
-        "The session key pays the VRF fee."
+        "ER. Starts opening an adjacent chest; VRF decides the tier in `callback_open_chest`."
       ],
       "discriminator": [
         143,
@@ -562,6 +971,9 @@ export type ExtractionDungeon = {
         {
           "name": "run",
           "writable": true
+        },
+        {
+          "name": "bag"
         },
         {
           "name": "oracleQueue",
@@ -715,7 +1127,8 @@ export type ExtractionDungeon = {
     {
       "name": "settleRun",
       "docs": [
-        "Base. Pays out from the vault. remaining_accounts = every seated wallet, in seat order."
+        "Base. Pays out from the vault by the (now public) bag points.",
+        "remaining_accounts: every seated wallet in seat order, then every Bag in seat order."
       ],
       "discriminator": [
         131,
@@ -803,6 +1216,19 @@ export type ExtractionDungeon = {
     }
   ],
   "accounts": [
+    {
+      "name": "bag",
+      "discriminator": [
+        209,
+        73,
+        132,
+        189,
+        4,
+        169,
+        188,
+        103
+      ]
+    },
     {
       "name": "run",
       "discriminator": [
@@ -955,11 +1381,74 @@ export type ExtractionDungeon = {
       "code": 6021,
       "name": "overflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6022,
+      "name": "attackCooldown",
+      "msg": "Attack is on cooldown"
+    },
+    {
+      "code": 6023,
+      "name": "badSeat",
+      "msg": "Unknown seat"
+    },
+    {
+      "code": 6024,
+      "name": "badBag",
+      "msg": "Bag accounts don't match the seats"
     }
   ],
   "types": [
     {
+      "name": "bag",
+      "docs": [
+        "One player's loot. Delegated to the TEE rollup with a permission that only that player's",
+        "session key can read, so opponents can't see what anyone is carrying until the run ends."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "run",
+            "type": "pubkey"
+          },
+          {
+            "name": "seat",
+            "type": "u8"
+          },
+          {
+            "name": "points",
+            "docs": [
+              "Points carried."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "dropped",
+            "docs": [
+              "Points in this player's sack on the floor (after death), until someone picks it up."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "lastTier",
+            "docs": [
+              "Tier of the last chest this player opened (so only they see what they got)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "chest",
+      "docs": [
+        "Public chest state. The rolled tier is private: it is written into the opener's `Bag`."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -984,7 +1473,7 @@ export type ExtractionDungeon = {
     {
       "name": "droppedBag",
       "docs": [
-        "The bag a dead player leaves on the floor. Indexed by the dead player's seat."
+        "Where a dead player's sack lies. What's inside is private (the victim's `Bag.dropped`)."
       ],
       "type": {
         "kind": "struct",
@@ -1010,6 +1499,9 @@ export type ExtractionDungeon = {
     },
     {
       "name": "playerSlot",
+      "docs": [
+        "Public per-player state, readable by everyone. Loot lives in the private `Bag`."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1048,15 +1540,15 @@ export type ExtractionDungeon = {
             "type": "bool"
           },
           {
-            "name": "bag",
-            "docs": [
-              "Loot points currently carried."
-            ],
-            "type": "u16"
-          },
-          {
             "name": "kills",
             "type": "u8"
+          },
+          {
+            "name": "lastAttackSlot",
+            "docs": [
+              "ER slot of this player's last attack (cooldown)."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1176,6 +1668,15 @@ export type ExtractionDungeon = {
           {
             "name": "house",
             "type": "u64"
+          },
+          {
+            "name": "points",
+            "type": {
+              "array": [
+                "u16",
+                4
+              ]
+            }
           }
         ]
       }

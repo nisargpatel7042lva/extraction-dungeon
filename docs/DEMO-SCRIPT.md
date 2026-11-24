@@ -8,20 +8,22 @@
 - Stake **0.05 SOL**, run length **90 s**.
 - Rehearse the fight once: P1 walks ↓↓→→→ to the left of the top exit, P2 comes from the bottom right.
   Open a chest *before* the fight so the dropped bag is worth something.
+- **The privacy shot is the money shot:** frame both screens so viewers see P1's HUD say "Your bag 🔒 3 pts" while P2's
+  says "bag ?" for P1.
 
 | Time | On screen | Voice-over |
 |---|---|---|
-| 0:00–0:12 | Title card or the game mid-fight | "Extraction Dungeon. Stake SOL, loot a dungeon, fight other players, and get out alive. What you extract with is yours, on Solana." |
-| 0:12–0:30 | P1: Connect Phantom → Create run (0.05 SOL, 90 s) → Join. Copy invite link. | "A host opens a run with a stake and a timer. Joining puts your stake in a vault that never leaves Solana's base layer, and registers a session key in your browser." |
-| 0:30–0:42 | P2 opens the link, joins. P1's lobby updates live to pot 0.10. Start run. | "When the host starts, the run is delegated to a MagicBlock Ephemeral Rollup in the same transaction." |
-| 0:42–1:05 | Both move. P1 walks into a chest: "opening" pulse, then **RARE +3**. | "From here every step, hit and chest is a transaction on the rollup: no fees, no wallet popups, around 50 to 80 milliseconds each. Walking into a chest asks MagicBlock's VRF, running inside the rollup, to roll the loot. That's verifiable randomness, landing in under two seconds." |
-| 1:05–1:30 | P2 hunts P1. Three hits: shake, flash, **SLAIN**, sack on the floor. | "Walk into another player to attack. Three hits and they're out, and their bag drops right where they fell." |
-| 1:30–1:45 | P2 steps on the sack (+3), walks to EXIT, presses E: **EXTRACTED**. | "Anyone can pick it up. To keep your loot you have to reach an exit and extract. Stay greedy too long and you're the one getting robbed." |
-| 1:45–2:05 | End run → "Committing to Solana…" → results: P2 extracted, 0.100 SOL. Settle payouts. | "When the run ends, the final state is committed back to Solana and undelegated. Extracted players split the pot by loot points. Slain or trapped players get nothing." |
+| 0:00–0:12 | Title card or the game mid-fight | "Extraction Dungeon. Stake SOL, loot a dungeon, fight other players, and get out alive. What you extract with is yours, and nobody can see what you're carrying." |
+| 0:12–0:25 | First visit: the **How to play** guide opens. Scroll it once, close. | "New players get a six-step guide: join, loot, fight, steal, get out, get paid." |
+| 0:25–0:42 | P1: Connect Phantom → Create run → Join. P2 opens the link, joins. P1's lobby shows pot 0.10. Start. | "Joining puts your stake in a vault that never leaves Solana, and gives you a private bag on a MagicBlock Private Ephemeral Rollup, readable only by your own session key." |
+| 0:42–1:05 | Split screen. P1 opens a chest: **RARE +3** on P1's screen. On P2's screen the chest just opens: "LOOTED ?". | "Walking into a chest asks MagicBlock VRF, running inside the rollup, to roll the loot. The tier lands in your private bag. Look at the other screen: they saw the chest open, but not what came out." |
+| 1:05–1:30 | P2 hunts P1. Spam-pressing attack: the meter refills, and only one hit per 0.4 s lands. Three hits: **SLAIN**, sack with "?". | "Three hits kill, with a cooldown so the fastest clicker doesn't automatically win. The victim's whole bag drops as a sack, and nobody knows what's inside." |
+| 1:30–1:45 | P2 steps on the sack: **+3**. Walks to EXIT, presses E: **EXTRACTED**. | "Grab it and run. To keep your loot you have to reach an exit. Stay greedy too long and you're the one getting robbed." |
+| 1:45–2:05 | End run → "Committing the run and every bag…" → results with every bag revealed. Settle payouts. | "When the run ends, the run and every bag are committed back to Solana, and the bags are revealed. Extracted players split the pot by loot points." |
 | 2:05–2:15 | Explorer: the settle tx, the vault → winner transfer. | "The payout comes straight from the program's vault, on devnet." |
-| 2:15–2:30 | README architecture diagram, then the GitHub repo | "Anchor program, ephemeral rollup, VRF and session keys, with tests in MagicSVM and on devnet. Entertainment Finance: a game where what you risk and what you win is real. Extraction Dungeon." |
+| 2:15–2:30 | README architecture diagram, then the GitHub repo | "Private Ephemeral Rollup, VRF, session keys and an Anchor program, tested in MagicSVM and on devnet. Entertainment Finance with real stakes and hidden information. Extraction Dungeon." |
 
 **If something goes wrong on camera**
-- A VRF chest takes over 3 s: cut it. The "opening" pulse plus the tier popup is the shot.
-- The commit takes a moment: keep "Committing to Solana…" on screen for 1–2 s. It shows the round trip.
-- Keep the HUD visible in the fight shots: pot, bags and the timer tell the story without narration.
+- A VRF chest takes over 3 s: cut it. The "opening" flicker plus the tier popup is the shot.
+- The commit takes a moment: keep "Committing…" on screen for 1–2 s. It shows the round trip.
+- Keep the HUD visible in the fight shots: pot, your 🔒 bag, the attack meter and the timer tell the story without narration.

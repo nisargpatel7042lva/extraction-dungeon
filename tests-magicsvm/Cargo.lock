@@ -1496,12 +1496,15 @@ dependencies = [
  "getrandom 0.2.17",
  "magicblock-delegation-program-api",
  "magicblock-magic-program-api 0.10.1",
+ "num-derive",
+ "num-traits",
  "solana-account-info 2.3.0",
  "solana-address 2.6.1",
  "solana-program 2.3.0",
  "solana-program 3.0.0",
  "solana-program-error 2.2.2",
  "solana-system-interface 2.0.0",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1658,6 +1661,7 @@ name = "extraction-dungeon-magicsvm-tests"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
+ "ephemeral-rollups-sdk 0.18.0",
  "extraction_dungeon",
  "magicsvm",
  "solana-address 2.6.1",
@@ -1741,7 +1745,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f76610e969fa1784327ded240f1e28a3fd9520c9cec93b636fcf62dd37f772"
 dependencies = [
- "five8_core 0.1.2",
+ "five8_core 1.0.0",
 ]
 
 [[package]]
@@ -1759,7 +1763,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a0f1728185f277989ca573a402716ae0beaaea3f76a8ff87ef9dd8fb19436c5"
 dependencies = [
- "five8_core 0.1.2",
+ "five8_core 1.0.0",
 ]
 
 [[package]]

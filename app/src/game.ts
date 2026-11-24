@@ -6,8 +6,8 @@ import { ChestState, MAP, RunState } from "./chain";
 
 export const TILE = 56;
 export const SEAT_COLORS = [0x5ab0ff, 0xff6ad5, 0xffa24a, 0xc9f24a];
-const TIER_COLORS: Record<number, number> = { 1: 0x9aa0ad, 2: 0x5ab0ff, 3: 0xf5c04a };
-const TIER_NAMES: Record<number, string> = { 1: "COMMON", 2: "RARE", 3: "LEGENDARY" };
+export const TIER_COLORS: Record<number, number> = { 1: 0x9aa0ad, 2: 0x5ab0ff, 3: 0xf5c04a };
+const UNKNOWN_TIER = 0x6b6280; // an opened chest someone else looted: you don't get to know what was in it
 
 const FLOOR_SPAN = TILE * 4; // one floor texture covers 4x4 tiles
 const WALL_SPAN = TILE * 2; // one wall texture covers 2x2 tiles
@@ -23,9 +23,27 @@ export class DungeonScene extends Phaser.Scene {
   private chestGlows: Phaser.GameObjects.Arc[] = [];
   private sacks: { img: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text }[] = [];
   private openingTweens = new Map<number, Phaser.Tweens.Tween>();
+  /** Tiers of chests *you* opened (tiers are private, so only the opener learns them). */
+  private knownTiers = new Map<number, number>();
 
   constructor() {
     super("dungeon");
+  }
+
+  /** Records the tier of a chest you opened and shows it. */
+  revealChest(chest: number, tier: number, name: string) {
+    this.knownTiers.set(chest, tier);
+    if (!this.players.length) return;
+    const [x, y] = MAP.CHESTS[chest];
+    this.pop(center(x), y * TILE, name, hex(TIER_COLORS[tier] ?? 0xffffff), tier === 3 ? 20 : 15);
+    if (tier === 3) this.cameras.main.flash(200, 245, 192, 74);
+    if (this.state) this.renderObjects(this.state);
+  }
+
+  /** A floating label over a seat's hero (e.g. your own private loot gains). */
+  popAtSeat(seat: number, text: string, color: string, size = 18) {
+    const c = this.players[seat];
+    if (c?.visible) this.pop(c.x, c.y - 20, text, color, size);
   }
 
   preload() {
@@ -113,7 +131,8 @@ export class DungeonScene extends Phaser.Scene {
         this.openingTweens.get(i)?.stop();
         this.openingTweens.delete(i);
         img.setTexture("chest_open").setAlpha(0.85).setDisplaySize(TILE * 0.82, TILE * 0.82);
-        glow.setFillStyle(TIER_COLORS[c.tier] ?? 0xffffff, 0.32);
+        const tier = this.knownTiers.get(i);
+        glow.setFillStyle(tier ? TIER_COLORS[tier] : UNKNOWN_TIER, tier ? 0.32 : 0.18);
       } else if (c.state === ChestState.Opening) {
         if (!this.openingTweens.has(i))
           this.openingTweens.set(i, this.tweens.add({ targets: img, alpha: 0.45, duration: 180, yoyo: true, repeat: -1 }));
@@ -127,7 +146,8 @@ export class DungeonScene extends Phaser.Scene {
     s.dropped.forEach((b, i) => {
       const { img, label } = this.sacks[i];
       img.setVisible(b.present).setPosition(center(b.x), center(b.y) + 4);
-      label.setVisible(b.present).setPosition(center(b.x) + TILE * 0.26, center(b.y) - TILE * 0.22).setText(`${b.points}`);
+      // What's inside a sack is private: everyone sees "?" until someone grabs it.
+      label.setVisible(b.present).setPosition(center(b.x) + TILE * 0.26, center(b.y) - TILE * 0.22).setText("?");
     });
   }
 
@@ -174,15 +194,14 @@ export class DungeonScene extends Phaser.Scene {
         const ghost = this.add.image(cx, cy - 2, `hero${i}`).setDisplaySize(TILE * 1.04, TILE * 1.04).setDepth(11);
         this.tweens.add({ targets: ghost, alpha: 0, scale: ghost.scale * 0.2, angle: 180, duration: 600, ease: "Cubic.easeIn", onComplete: () => ghost.destroy() });
       }
-      if (p.bag > was.bag) this.pop(cx, cy - 20, `+${p.bag - was.bag}`, "#f5c04a", 18);
     }
 
+    // Chests other players open: everyone sees it opened, nobody but the opener learns the tier.
     prev?.chests.forEach((was, i) => {
       const c = s.chests[i];
-      if (was.state !== ChestState.Opened && c.state === ChestState.Opened) {
+      if (was.state !== ChestState.Opened && c.state === ChestState.Opened && c.opener !== this.mySeat) {
         const [x, y] = MAP.CHESTS[i];
-        this.pop(center(x), y * TILE, TIER_NAMES[c.tier] ?? "?", hex(TIER_COLORS[c.tier] ?? 0xffffff), c.tier === 3 ? 20 : 14);
-        if (c.tier === 3) this.cameras.main.flash(200, 245, 192, 74);
+        this.pop(center(x), y * TILE, "LOOTED ?", hex(UNKNOWN_TIER + 0x303030), 13);
       }
     });
   }

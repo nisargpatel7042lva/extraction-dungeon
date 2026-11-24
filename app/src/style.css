@@ -84,6 +84,43 @@ a { color: var(--gold); }
 .timer.low { color: var(--red); }
 .keys { color: var(--muted); font-size: 12px; margin-top: 14px; line-height: 1.8; }
 kbd { background: var(--line); border-radius: 4px; padding: 1px 6px; font-family: ui-monospace, monospace; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+button.small { padding: 6px 10px; font-size: 13px; }
+
+/* attack cooldown meter */
+.cooldown { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+.cooldown .bar { flex: 1; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.cooldown i { display: block; height: 100%; background: var(--muted); }
+.cooldown i.ready { background: var(--red); }
+
+/* how-to-play guide */
+dialog#guide {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px 24px;
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+dialog#guide::backdrop { background: rgba(5, 4, 9, 0.75); }
+.guide-close { position: absolute; top: 12px; right: 12px; margin: 0; }
+.guide-close button { padding: 4px 10px; }
+.guide-steps { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 12px; }
+.guide-steps li { display: flex; gap: 14px; align-items: flex-start; }
+.guide-steps img { width: 48px; height: 48px; flex: none; image-rendering: auto; }
+.guide-steps p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.guide-steps b { color: var(--text); }
+.guide-note {
+  background: #1f1833;
+  border: 1px solid #3a2f5c;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  margin: 6px 0 10px;
+}
+
 #toast {
   position: fixed;
   bottom: 20px;

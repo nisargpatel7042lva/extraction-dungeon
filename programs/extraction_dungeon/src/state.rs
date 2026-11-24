@@ -4,8 +4,10 @@ use crate::{map::NUM_CHESTS, DungeonError};
 
 pub const MAX_PLAYERS: usize = 4;
 pub const START_HP: u8 = 3;
-/// Lamports moved from the wallet to the session key at join, to fund VRF requests on the ER.
+/// Lamports moved from the wallet to the session key at join, for ER/TEE fees.
 pub const SESSION_TOPUP: u64 = 4_000_000;
+/// ER slots are ~11ms on devnet, so 36 slots is ~400ms between attacks.
+pub const ATTACK_COOLDOWN_SLOTS: u64 = 36;
 
 #[repr(u8)]
 pub enum RunStatus {
@@ -44,6 +46,7 @@ pub fn points_for_tier(tier: u8) -> u16 {
     }
 }
 
+/// Public per-player state, readable by everyone. Loot lives in the private `Bag`.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, InitSpace)]
 pub struct PlayerSlot {
     /// Wallet that staked and receives payouts.
@@ -55,9 +58,9 @@ pub struct PlayerSlot {
     pub hp: u8,
     pub alive: bool,
     pub extracted: bool,
-    /// Loot points currently carried.
-    pub bag: u16,
     pub kills: u8,
+    /// ER slot of this player's last attack (cooldown).
+    pub last_attack_slot: u64,
 }
 
 impl PlayerSlot {
@@ -67,6 +70,7 @@ impl PlayerSlot {
     }
 }
 
+/// Public chest state. The rolled tier is private: it is written into the opener's `Bag`.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, InitSpace)]
 pub struct Chest {
     pub state: u8,
@@ -75,7 +79,7 @@ pub struct Chest {
     pub opener: u8,
 }
 
-/// The bag a dead player leaves on the floor. Indexed by the dead player's seat.
+/// Where a dead player's sack lies. What's inside is private (the victim's `Bag.dropped`).
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, InitSpace)]
 pub struct DroppedBag {
     pub x: u8,
@@ -102,6 +106,22 @@ pub struct Run {
     pub settled: bool,
     pub bump: u8,
     pub vault_bump: u8,
+}
+
+/// One player's loot. Delegated to the TEE rollup with a permission that only that player's
+/// session key can read, so opponents can't see what anyone is carrying until the run ends.
+#[account]
+#[derive(InitSpace)]
+pub struct Bag {
+    pub run: Pubkey,
+    pub seat: u8,
+    /// Points carried.
+    pub points: u16,
+    /// Points in this player's sack on the floor (after death), until someone picks it up.
+    pub dropped: u16,
+    /// Tier of the last chest this player opened (so only they see what they got).
+    pub last_tier: u8,
+    pub bump: u8,
 }
 
 /// Holds the stakes on the base layer. Never delegated, so payouts can't be touched by the ER.
@@ -133,52 +153,46 @@ impl Run {
         self.seated().iter().all(|p| !p.active())
     }
 
-    /// Kills seat `i`: its bag drops on its tile.
+    /// Kills seat `i` and marks its sack on its tile. Moving the points is the caller's job.
     pub fn kill(&mut self, i: usize) {
         let p = &mut self.players[i];
         p.alive = false;
         p.hp = 0;
-        self.dropped[i] = DroppedBag {
-            x: p.x,
-            y: p.y,
-            points: p.bag,
-            present: true,
-        };
-        p.bag = 0;
+        self.dropped[i] = DroppedBag { x: p.x, y: p.y, points: 0, present: true };
     }
 
-    /// Moves every dropped bag at (x, y) into seat `i`'s bag.
-    pub fn pick_up(&mut self, i: usize, x: u8, y: u8) {
-        let mut gained = 0u16;
-        for b in self.dropped.iter_mut() {
-            if b.present && b.x == x && b.y == y {
-                gained = gained.saturating_add(b.points);
-                *b = DroppedBag::default();
-            }
-        }
-        self.players[i].bag = self.players[i].bag.saturating_add(gained);
+    /// Seats whose sacks lie on (x, y).
+    pub fn sacks_at(&self, x: u8, y: u8) -> Vec<usize> {
+        (0..MAX_PLAYERS)
+            .filter(|&j| self.dropped[j].present && self.dropped[j].x == x && self.dropped[j].y == y)
+            .collect()
     }
 
-    /// Splits the pot. Returns (per-seat payout, house remainder).
+    /// Splits the pot given each seat's bag points. Returns (per-seat payout, house remainder).
     /// - Extracted players share the pot in proportion to bag points.
     /// - Extracted with empty bags only: equal split.
     /// - Nobody extracted: everything to the house.
     /// Integer dust goes to the house, so payouts + house == pot exactly.
-    pub fn payouts(&self) -> ([u64; MAX_PLAYERS], u64) {
+    pub fn payouts(&self, points: &[u16; MAX_PLAYERS]) -> ([u64; MAX_PLAYERS], u64) {
         let mut out = [0u64; MAX_PLAYERS];
         let seated = self.seated();
         let n_ext = seated.iter().filter(|p| p.extracted).count() as u128;
         if n_ext == 0 {
             return (out, self.pot);
         }
-        let total: u128 = seated.iter().filter(|p| p.extracted).map(|p| p.bag as u128).sum();
+        let total: u128 = seated
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.extracted)
+            .map(|(i, _)| points[i] as u128)
+            .sum();
         let pot = self.pot as u128;
         let mut paid = 0u128;
         for (i, p) in seated.iter().enumerate() {
             if !p.extracted {
                 continue;
             }
-            let share = if total == 0 { pot / n_ext } else { pot * p.bag as u128 / total };
+            let share = if total == 0 { pot / n_ext } else { pot * points[i] as u128 / total };
             out[i] = share as u64;
             paid += share;
         }
@@ -190,12 +204,14 @@ impl Run {
 mod tests {
     use super::*;
 
-    fn run_with(pot: u64, seats: &[(bool, u16)]) -> Run {
+    fn run_with(pot: u64, seats: &[(bool, u16)]) -> (Run, [u16; MAX_PLAYERS]) {
         let mut players = [PlayerSlot::default(); MAX_PLAYERS];
+        let mut points = [0u16; MAX_PLAYERS];
         for (i, &(extracted, bag)) in seats.iter().enumerate() {
-            players[i] = PlayerSlot { extracted, bag, alive: true, ..Default::default() };
+            players[i] = PlayerSlot { extracted, alive: true, ..Default::default() };
+            points[i] = bag;
         }
-        Run {
+        let run = Run {
             authority: Pubkey::default(),
             run_id: 0,
             status: RunStatus::Ended as u8,
@@ -210,38 +226,38 @@ mod tests {
             settled: false,
             bump: 0,
             vault_bump: 0,
-        }
+        };
+        (run, points)
     }
 
-    fn conserved(r: &Run) -> ([u64; MAX_PLAYERS], u64) {
-        let (s, h) = r.payouts();
+    fn conserved(r: &Run, pts: &[u16; MAX_PLAYERS]) -> ([u64; MAX_PLAYERS], u64) {
+        let (s, h) = r.payouts(pts);
         assert_eq!(s.iter().sum::<u64>() + h, r.pot, "payouts + house must equal pot");
         (s, h)
     }
 
     #[test]
     fn proportional_to_bag_points_among_extracted() {
-        // 3 + 1 points extracted, a 3rd player trapped with 8 points gets nothing.
-        let r = run_with(400, &[(true, 3), (true, 1), (false, 8)]);
-        assert_eq!(conserved(&r), ([300, 100, 0, 0], 0));
+        let (r, p) = run_with(400, &[(true, 3), (true, 1), (false, 8)]);
+        assert_eq!(conserved(&r, &p), ([300, 100, 0, 0], 0));
     }
 
     #[test]
     fn empty_bags_split_equally() {
-        let r = run_with(300, &[(true, 0), (false, 5), (true, 0)]);
-        assert_eq!(conserved(&r), ([150, 0, 150, 0], 0));
+        let (r, p) = run_with(300, &[(true, 0), (false, 5), (true, 0)]);
+        assert_eq!(conserved(&r, &p), ([150, 0, 150, 0], 0));
     }
 
     #[test]
     fn nobody_extracted_goes_to_house() {
-        let r = run_with(250, &[(false, 3), (false, 0)]);
-        assert_eq!(conserved(&r), ([0; MAX_PLAYERS], 250));
+        let (r, p) = run_with(250, &[(false, 3), (false, 0)]);
+        assert_eq!(conserved(&r, &p), ([0; MAX_PLAYERS], 250));
     }
 
     #[test]
     fn integer_dust_goes_to_house() {
-        let r = run_with(100, &[(true, 1), (true, 1), (true, 1)]);
-        assert_eq!(conserved(&r), ([33, 33, 33, 0], 1));
+        let (r, p) = run_with(100, &[(true, 1), (true, 1), (true, 1)]);
+        assert_eq!(conserved(&r, &p), ([33, 33, 33, 0], 1));
     }
 
     #[test]

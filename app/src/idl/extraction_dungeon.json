@@ -9,7 +9,9 @@
     {
       "name": "attack",
       "docs": [
-        "ER. Hits the active player on the adjacent tile in `dir` for 1 damage."
+        "ER. Hits the active player on the adjacent tile in `dir` for 1 damage, at most once per",
+        "ATTACK_COOLDOWN_SLOTS. A kill drops the victim's whole bag on their tile.",
+        "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
         197,
@@ -41,8 +43,8 @@
     {
       "name": "callback_open_chest",
       "docs": [
-        "VRF callback. Puts the loot in the opener's bag, or in their dropped bag if they",
-        "died while the chest was opening."
+        "VRF callback. The tier goes into the opener's private Bag; the Run only learns \"opened\".",
+        "Loot goes into the opener's bag, or their sack if they died while it was opening."
       ],
       "discriminator": [
         229,
@@ -62,6 +64,10 @@
         },
         {
           "name": "run",
+          "writable": true
+        },
+        {
+          "name": "bag",
           "writable": true
         }
       ],
@@ -88,7 +94,8 @@
     {
       "name": "create_run",
       "docs": [
-        "Base. Creates an empty lobby and its stake vault."
+        "Base. Creates an empty lobby and its stake vault. The run PDA is pre-funded with rent for",
+        "its (public) ephemeral permission, created on the TEE after delegation."
       ],
       "discriminator": [
         195,
@@ -169,6 +176,185 @@
         {
           "name": "duration_secs",
           "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "delegate_bag",
+      "docs": [
+        "Base. Hands a seat's Bag to the (TEE) ER validator. Sent in the same tx as `join_run`."
+      ],
+      "discriminator": [
+        192,
+        37,
+        169,
+        135,
+        248,
+        198,
+        31,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "run"
+        },
+        {
+          "name": "buffer_bag",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                23,
+                211,
+                148,
+                191,
+                186,
+                102,
+                74,
+                25,
+                65,
+                175,
+                191,
+                130,
+                140,
+                214,
+                93,
+                39,
+                9,
+                169,
+                226,
+                113,
+                133,
+                36,
+                85,
+                234,
+                56,
+                84,
+                145,
+                81,
+                75,
+                175,
+                116,
+                142
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_bag",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_bag",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "bag",
+          "writable": true
+        },
+        {
+          "name": "owner_program",
+          "address": "2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seat",
+          "type": "u8"
         }
       ]
     },
@@ -371,9 +557,9 @@
     {
       "name": "end_run",
       "docs": [
-        "ER. Ends the run and commits + undelegates it to base. Allowed for the authority at",
-        "any time, or for anyone once the clock has run out or every player is dead/extracted.",
-        "Players still inside when it ends are trapped: their loot is lost."
+        "ER. Ends the run and commits + undelegates the run and every Bag to base. Allowed for the",
+        "authority at any time, or for anyone once the clock has run out or everyone is resolved.",
+        "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
         3,
@@ -435,10 +621,230 @@
       "args": []
     },
     {
+      "name": "init_bag_permission",
+      "docs": [
+        "ER. Makes a seat's Bag private: only that seat's session key can read it via the TEE.",
+        "Idempotent. Paid from the rent the Bag was pre-funded with at join."
+      ],
+      "discriminator": [
+        180,
+        7,
+        216,
+        20,
+        111,
+        41,
+        203,
+        17
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run"
+        },
+        {
+          "name": "bag",
+          "writable": true
+        },
+        {
+          "name": "permission",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  58
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bag"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                136,
+                161,
+                10,
+                196,
+                33,
+                152,
+                1,
+                214,
+                246,
+                106,
+                29,
+                60,
+                6,
+                152,
+                192,
+                102,
+                169,
+                175,
+                212,
+                217,
+                180,
+                252,
+                231,
+                71,
+                151,
+                141,
+                209,
+                5,
+                168,
+                212,
+                103,
+                82
+              ]
+            }
+          }
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "ephemeral_vault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seat",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "init_run_permission",
+      "docs": [
+        "ER. Gives the Run a public permission so every authenticated TEE client can read it.",
+        "Idempotent; anyone can call it."
+      ],
+      "discriminator": [
+        166,
+        36,
+        211,
+        108,
+        91,
+        255,
+        221,
+        235
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        },
+        {
+          "name": "permission",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  58
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                136,
+                161,
+                10,
+                196,
+                33,
+                152,
+                1,
+                214,
+                246,
+                106,
+                29,
+                60,
+                6,
+                152,
+                192,
+                102,
+                169,
+                175,
+                212,
+                217,
+                180,
+                252,
+                231,
+                71,
+                151,
+                141,
+                209,
+                5,
+                168,
+                212,
+                103,
+                82
+              ]
+            }
+          }
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "ephemeral_vault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "join_run",
       "docs": [
-        "Base. Seats the wallet, takes its stake into the vault, and funds + registers the",
-        "browser session key that will sign its actions inside the ER."
+        "Base. Seats the wallet, takes its stake into the vault, funds + registers the browser",
+        "session key, and creates this seat's private Bag (pre-funded for its permission)."
       ],
       "discriminator": [
         72,
@@ -487,6 +893,10 @@
           "writable": true
         },
         {
+          "name": "bag",
+          "writable": true
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -501,8 +911,8 @@
     {
       "name": "move_player",
       "docs": [
-        "ER. One grid step. `dir`: 0 up, 1 right, 2 down, 3 left.",
-        "Stepping onto a dropped bag picks it up."
+        "ER. One grid step. `dir`: 0 up, 1 right, 2 down, 3 left. Stepping onto sacks loots them.",
+        "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
         17,
@@ -534,8 +944,7 @@
     {
       "name": "open_chest",
       "docs": [
-        "ER. Starts opening an adjacent chest; VRF decides the tier in `callback_open_chest`.",
-        "The session key pays the VRF fee."
+        "ER. Starts opening an adjacent chest; VRF decides the tier in `callback_open_chest`."
       ],
       "discriminator": [
         143,
@@ -556,6 +965,9 @@
         {
           "name": "run",
           "writable": true
+        },
+        {
+          "name": "bag"
         },
         {
           "name": "oracle_queue",
@@ -709,7 +1121,8 @@
     {
       "name": "settle_run",
       "docs": [
-        "Base. Pays out from the vault. remaining_accounts = every seated wallet, in seat order."
+        "Base. Pays out from the vault by the (now public) bag points.",
+        "remaining_accounts: every seated wallet in seat order, then every Bag in seat order."
       ],
       "discriminator": [
         131,
@@ -797,6 +1210,19 @@
     }
   ],
   "accounts": [
+    {
+      "name": "Bag",
+      "discriminator": [
+        209,
+        73,
+        132,
+        189,
+        4,
+        169,
+        188,
+        103
+      ]
+    },
     {
       "name": "Run",
       "discriminator": [
@@ -949,11 +1375,74 @@
       "code": 6021,
       "name": "Overflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6022,
+      "name": "AttackCooldown",
+      "msg": "Attack is on cooldown"
+    },
+    {
+      "code": 6023,
+      "name": "BadSeat",
+      "msg": "Unknown seat"
+    },
+    {
+      "code": 6024,
+      "name": "BadBag",
+      "msg": "Bag accounts don't match the seats"
     }
   ],
   "types": [
     {
+      "name": "Bag",
+      "docs": [
+        "One player's loot. Delegated to the TEE rollup with a permission that only that player's",
+        "session key can read, so opponents can't see what anyone is carrying until the run ends."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "run",
+            "type": "pubkey"
+          },
+          {
+            "name": "seat",
+            "type": "u8"
+          },
+          {
+            "name": "points",
+            "docs": [
+              "Points carried."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "dropped",
+            "docs": [
+              "Points in this player's sack on the floor (after death), until someone picks it up."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "last_tier",
+            "docs": [
+              "Tier of the last chest this player opened (so only they see what they got)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "Chest",
+      "docs": [
+        "Public chest state. The rolled tier is private: it is written into the opener's `Bag`."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -978,7 +1467,7 @@
     {
       "name": "DroppedBag",
       "docs": [
-        "The bag a dead player leaves on the floor. Indexed by the dead player's seat."
+        "Where a dead player's sack lies. What's inside is private (the victim's `Bag.dropped`)."
       ],
       "type": {
         "kind": "struct",
@@ -1004,6 +1493,9 @@
     },
     {
       "name": "PlayerSlot",
+      "docs": [
+        "Public per-player state, readable by everyone. Loot lives in the private `Bag`."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1042,15 +1534,15 @@
             "type": "bool"
           },
           {
-            "name": "bag",
-            "docs": [
-              "Loot points currently carried."
-            ],
-            "type": "u16"
-          },
-          {
             "name": "kills",
             "type": "u8"
+          },
+          {
+            "name": "last_attack_slot",
+            "docs": [
+              "ER slot of this player's last attack (cooldown)."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1170,6 +1662,15 @@
           {
             "name": "house",
             "type": "u64"
+          },
+          {
+            "name": "points",
+            "type": {
+              "array": [
+                "u16",
+                4
+              ]
+            }
           }
         ]
       }

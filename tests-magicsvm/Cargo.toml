@@ -8,6 +8,7 @@ publish = false
 
 [dev-dependencies]
 anchor-lang = "=1.1.2"
+ephemeral-rollups-sdk = { version = "0.18", features = ["anchor", "access-control"] }
 magicsvm = "0.3.0"
 extraction_dungeon = { path = "../programs/extraction_dungeon", features = ["no-entrypoint"] }
 test-utils = { path = "../test-utils/rust", features = ["anchor"] }

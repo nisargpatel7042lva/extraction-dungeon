@@ -1,8 +1,14 @@
-// Everything that talks to Solana / the Ephemeral Rollup. Shared by the browser game and the
-// Node smoke script, so the smoke test exercises exactly the code the game runs.
+// Everything that talks to Solana / the (Private) Ephemeral Rollup. Shared by the browser game and
+// the Node scripts, so the smoke test exercises exactly the code the game runs.
+//
+// On devnet the game runs on MagicBlock's TEE rollup (Private Ephemeral Rollup). Every rollup
+// connection is authenticated with a token for one identity (a session key): that's what lets a
+// player read their own private Bag while nobody else can.
 import { AnchorProvider, Program } from "@anchor-lang/core";
 import BN from "bn.js";
+import nacl from "tweetnacl";
 import {
+  AccountMeta,
   Commitment,
   ComputeBudgetProgram,
   Connection,
@@ -12,7 +18,14 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
-import { MAGIC_CONTEXT_ID, MAGIC_PROGRAM_ID } from "@magicblock-labs/ephemeral-rollups-sdk";
+import {
+  EPHEMERAL_VAULT_ID,
+  MAGIC_CONTEXT_ID,
+  MAGIC_PROGRAM_ID,
+  PERMISSION_PROGRAM_ID,
+  getAuthToken,
+  permissionPdaFromAccount,
+} from "@magicblock-labs/ephemeral-rollups-sdk";
 import idl from "./idl/extraction_dungeon.json";
 import type { ExtractionDungeon } from "./idl/extraction_dungeon";
 
@@ -27,6 +40,8 @@ export interface NetConfig {
   validator: PublicKey;
   /** Whether the dev wallet can airdrop itself. */
   airdrop: boolean;
+  /** TEE rollup: connections need an auth token, and private accounts are hidden. */
+  tee: boolean;
 }
 
 export const NETS: Record<Net, NetConfig> = {
@@ -37,14 +52,16 @@ export const NETS: Record<Net, NetConfig> = {
     erWs: "ws://127.0.0.1:7800",
     validator: new PublicKey("mAGicPQYBMvcYveUZA5F5UNNwyHvfYh5xkLS2Fr1mev"),
     airdrop: true,
+    tee: false,
   },
   devnet: {
     base: "https://api.devnet.solana.com",
     baseWs: "wss://api.devnet.solana.com",
-    er: "https://devnet-as.magicblock.app",
-    erWs: "wss://devnet-as.magicblock.app",
-    validator: new PublicKey("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"),
+    er: "https://devnet-tee.magicblock.app",
+    erWs: "wss://devnet-tee.magicblock.app",
+    validator: new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo"),
     airdrop: false,
+    tee: true,
   },
 };
 
@@ -56,6 +73,10 @@ export const SLOT_HASHES = new PublicKey("SysvarS1otHashes1111111111111111111111
 export const Dir = { Up: 0, Right: 1, Down: 2, Left: 3 } as const;
 export const Status = { Lobby: 0, Live: 1, Ended: 2 } as const;
 export const ChestState = { Closed: 0, Opening: 1, Opened: 2 } as const;
+export const TIER_NAMES: Record<number, string> = { 1: "COMMON", 2: "RARE", 3: "LEGENDARY" };
+export const TIER_POINTS: Record<number, number> = { 1: 1, 2: 3, 3: 8 };
+/** Mirrors ATTACK_COOLDOWN_SLOTS (36 slots at ~11ms). The program is the authority. */
+export const ATTACK_COOLDOWN_MS = 420;
 
 /** Mirrors programs/extraction_dungeon/src/map.rs. */
 export const MAP = {
@@ -84,8 +105,8 @@ export interface PlayerSlot {
   hp: number;
   alive: boolean;
   extracted: boolean;
-  bag: number;
   kills: number;
+  lastAttackSlot: BN;
 }
 export interface RunState {
   authority: PublicKey;
@@ -101,8 +122,16 @@ export interface RunState {
   dropped: { x: number; y: number; points: number; present: boolean }[];
   settled: boolean;
 }
+/** A seat's private loot. Readable on the TEE only by that seat's session key. */
+export interface BagState {
+  run: PublicKey;
+  seat: number;
+  points: number;
+  dropped: number;
+  lastTier: number;
+}
 
-/** Signs transactions for the player's real wallet (Phantom, or a local dev keypair). */
+/** Signs transactions for the player's real wallet (Phantom, or a dev keypair). */
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction(tx: Transaction): Promise<Transaction>;
@@ -127,16 +156,22 @@ export function runPda(authority: PublicKey, runId: BN): PublicKey {
 export function vaultPda(run: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("vault"), run.toBuffer()], PROGRAM_ID)[0];
 }
+export function bagPda(run: PublicKey, seat: number): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("bag"), run.toBuffer(), Buffer.from([seat])], PROGRAM_ID)[0];
+}
 const PROGRAM_IDENTITY = PublicKey.findProgramAddressSync([Buffer.from("identity")], PROGRAM_ID)[0];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class Chain {
   readonly base: Connection;
-  readonly er: Connection;
   readonly program: Program<ExtractionDungeon>;
+  /** Identity for public reads on the TEE (any key can authenticate). */
+  private readonly viewer = Keypair.generate();
+  private erConns = new Map<string, Promise<Connection>>();
 
-  constructor(readonly net: NetConfig, commitment: Commitment = "confirmed") {
+  constructor(readonly net: NetConfig, private commitment: Commitment = "confirmed") {
     this.base = new Connection(net.base, { commitment, wsEndpoint: net.baseWs });
-    this.er = new Connection(net.er, { commitment, wsEndpoint: net.erWs });
     // Instructions only: we sign and send ourselves, so the provider wallet is never used.
     const dummy = {
       publicKey: PublicKey.default,
@@ -146,46 +181,124 @@ export class Chain {
     this.program = new Program<ExtractionDungeon>(idl as any, new AnchorProvider(this.base, dummy as any, {}));
   }
 
+  /** A rollup connection authenticated as `who` (default: an anonymous viewer). On the TEE the
+   *  identity signs an auth challenge locally; no wallet involved. */
+  er(who: Keypair = this.viewer): Promise<Connection> {
+    const key = who.publicKey.toBase58();
+    let c = this.erConns.get(key);
+    if (!c) {
+      c = (async () => {
+        if (!this.net.tee) return new Connection(this.net.er, { commitment: this.commitment, wsEndpoint: this.net.erWs });
+        const auth = await getAuthToken(this.net.er, who.publicKey, (m: Uint8Array) =>
+          Promise.resolve(nacl.sign.detached(m, who.secretKey)),
+        );
+        return new Connection(`${this.net.er}?token=${auth.token}`, {
+          commitment: this.commitment,
+          wsEndpoint: `${this.net.erWs}?token=${auth.token}`,
+        });
+      })();
+      c.catch(() => this.erConns.delete(key));
+      this.erConns.set(key, c);
+    }
+    return c;
+  }
+
   // ---------- reading ----------
 
   decode(data: Buffer): RunState {
     return this.program.coder.accounts.decode("run", data) as RunState;
   }
 
+  decodeBag(data: Buffer): BagState {
+    return this.program.coder.accounts.decode("bag", data) as BagState;
+  }
+
+  bags(run: PublicKey, count: number): PublicKey[] {
+    return Array.from({ length: count }, (_, i) => bagPda(run, i));
+  }
+
+  private bagMetas(run: PublicKey, count: number, writable = true): AccountMeta[] {
+    return this.bags(run, count).map((pubkey) => ({ pubkey, isSigner: false, isWritable: writable }));
+  }
+
   /** Reads the run from wherever it currently lives: the ER while delegated, else base. */
   async fetchRun(run: PublicKey): Promise<{ state: RunState; onEr: boolean } | null> {
     const baseInfo = await this.base.getAccountInfo(run);
     if (!baseInfo) return null;
-    const delegated = !baseInfo.owner.equals(PROGRAM_ID);
-    if (delegated) {
-      const erInfo = await this.er.getAccountInfo(run);
+    if (!baseInfo.owner.equals(PROGRAM_ID)) {
+      const erInfo = await (await this.er()).getAccountInfo(run).catch(() => null);
       if (erInfo) return { state: this.decode(erInfo.data), onEr: true };
+      return null; // delegated but not readable on the ER yet
     }
-    if (!baseInfo.owner.equals(PROGRAM_ID)) return null; // delegated but ER hasn't cloned it yet
     return { state: this.decode(baseInfo.data), onEr: false };
   }
 
-  /** Live updates from the ER (during play) or base (lobby / after commit).
+  /** A seat's bag: from the ER through the owner's authenticated connection while delegated,
+   *  else from base (where it's public after the run). Null if it can't be read. */
+  async fetchBag(run: PublicKey, seat: number, owner?: Keypair): Promise<BagState | null> {
+    const pda = bagPda(run, seat);
+    const baseInfo = await this.base.getAccountInfo(pda);
+    if (baseInfo && baseInfo.owner.equals(PROGRAM_ID)) return this.decodeBag(baseInfo.data);
+    const info = await (await this.er(owner)).getAccountInfo(pda).catch(() => null);
+    return info ? this.decodeBag(info.data) : null;
+  }
+
+  /** Live updates of the run, from the ER (during play) or base (lobby / after commit).
    *  On base, `onDelegated` fires when the account is handed to the delegation program,
    *  i.e. the run just went live on the ER. */
   subscribe(conn: "er" | "base", run: PublicKey, cb: (s: RunState) => void, onDelegated?: () => void): () => void {
-    const c = conn === "er" ? this.er : this.base;
-    const id = c.onAccountChange(
-      run,
-      (info) => {
-        if (conn === "base" && !info.owner.equals(PROGRAM_ID)) {
-          onDelegated?.();
-          return;
-        }
-        try {
-          cb(this.decode(info.data));
-        } catch {
-          /* not a Run (e.g. mid-delegation) */
-        }
-      },
-      { commitment: "processed" },
-    );
-    return () => void c.removeAccountChangeListener(id);
+    let stop = () => {};
+    let stopped = false;
+    void (async () => {
+      const c = conn === "er" ? await this.er() : this.base;
+      if (stopped) return;
+      const id = c.onAccountChange(
+        run,
+        (info) => {
+          if (conn === "base" && !info.owner.equals(PROGRAM_ID)) {
+            onDelegated?.();
+            return;
+          }
+          try {
+            cb(this.decode(info.data));
+          } catch {
+            /* not a Run (e.g. mid-delegation) */
+          }
+        },
+        { commitment: "processed" },
+      );
+      stop = () => void c.removeAccountChangeListener(id);
+    })();
+    return () => {
+      stopped = true;
+      stop();
+    };
+  }
+
+  /** Live updates of your own private bag on the ER. */
+  subscribeBag(owner: Keypair, run: PublicKey, seat: number, cb: (b: BagState) => void): () => void {
+    let stop = () => {};
+    let stopped = false;
+    void (async () => {
+      const c = await this.er(owner);
+      if (stopped) return;
+      const id = c.onAccountChange(
+        bagPda(run, seat),
+        (info) => {
+          try {
+            cb(this.decodeBag(info.data));
+          } catch {
+            /* ignore */
+          }
+        },
+        { commitment: "processed" },
+      );
+      stop = () => void c.removeAccountChangeListener(id);
+    })();
+    return () => {
+      stopped = true;
+      stop();
+    };
   }
 
   // ---------- sending ----------
@@ -195,18 +308,15 @@ export class Chain {
     ixs: TransactionInstruction[],
     feePayer: PublicKey,
     sign: (tx: Transaction) => Promise<Transaction>,
-    opts: { skipPreflight?: boolean; confirm?: boolean } = {},
   ): Promise<string> {
     const tx = new Transaction().add(...ixs);
     tx.feePayer = feePayer;
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
     const signed = await sign(tx);
-    const sig = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: opts.skipPreflight ?? false });
-    if (opts.confirm !== false) {
-      const res = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight });
-      if (res.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(res.value.err)}`);
-    }
+    const sig = await conn.sendRawTransaction(signed.serialize());
+    const res = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight });
+    if (res.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(res.value.err)}`);
     return sig;
   }
 
@@ -220,13 +330,12 @@ export class Chain {
   /** Called when a fire-and-forget ER action later turns out to have failed. */
   onActionError: ((err: string) => void) | null = null;
 
-  /** ER blockhash, refreshed in the background so actions don't pay a round trip for it.
-   *  ER slots are ~50ms and blockhashes stay valid for seconds, so a 1s-old hash is fine. */
+  /** ER blockhash, refreshed in the background so actions don't pay a round trip for it. */
   private async erBlockhash() {
     const stale = !this.erHash || Date.now() - this.erHash.at > 1000;
     if (stale && !this.erHashFetch) {
-      this.erHashFetch = this.er
-        .getLatestBlockhash()
+      this.erHashFetch = this.er()
+        .then((c) => c.getLatestBlockhash())
         .then((h) => (this.erHash = { ...h, at: Date.now() }))
         .finally(() => (this.erHashFetch = null));
     }
@@ -241,19 +350,33 @@ export class Chain {
    *  With `confirm = false` this resolves as soon as the ER has the transaction; confirmation
    *  runs in the background and failures are reported via `onActionError`. */
   private async sendEr(session: Keypair, ixs: TransactionInstruction[], confirm = true) {
+    const conn = await this.er(session);
     const nonce = ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 + (this.erNonce++ % 50_000) });
     const { blockhash, lastValidBlockHeight } = await this.erBlockhash();
     const tx = new Transaction().add(nonce, ...ixs);
     tx.feePayer = session.publicKey;
     tx.recentBlockhash = blockhash;
     tx.sign(session);
-    const sig = await this.er.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-    const confirmed = this.er.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "processed").then((r) => {
+    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+    const confirmed = conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "processed").then((r) => {
       if (r.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(r.value.err)}`);
     });
     if (confirm) await confirmed;
     else confirmed.catch((e) => this.onActionError?.((e as Error).message));
     return sig;
+  }
+
+  /** Retries an ER call that depends on the ER having cloned freshly delegated accounts. */
+  private async retryEr<T>(f: () => Promise<T>, what: string, timeoutMs = 30_000): Promise<T> {
+    const t0 = Date.now();
+    for (;;) {
+      try {
+        return await f();
+      } catch (e) {
+        if (Date.now() - t0 > timeoutMs) throw new Error(`${what}: ${(e as Error).message}`);
+        await sleep(700);
+      }
+    }
   }
 
   // ---------- base layer ----------
@@ -269,20 +392,28 @@ export class Chain {
     return { run, runId };
   }
 
-  async joinRun(wallet: WalletSigner, run: PublicKey, session: PublicKey) {
-    const ix = await this.program.methods
+  /** join_run + delegate_bag in one transaction. Returns the seat. */
+  async joinRun(wallet: WalletSigner, run: PublicKey, session: PublicKey): Promise<number> {
+    const info = await this.base.getAccountInfo(run);
+    if (!info) throw new Error("run not found");
+    const seat = this.decode(info.data).playerCount;
+    const bag = bagPda(run, seat);
+    const join = await this.program.methods
       .joinRun(session)
-      .accountsPartial({ player: wallet.publicKey, run, vault: vaultPda(run), session })
+      .accountsPartial({ player: wallet.publicKey, run, vault: vaultPda(run), session, bag })
       .instruction();
-    return this.sendBase(wallet, [ix]);
+    const delegate = await this.program.methods
+      .delegateBag(seat)
+      .accountsPartial({ payer: wallet.publicKey, run, bag })
+      .remainingAccounts([{ pubkey: this.net.validator, isSigner: false, isWritable: false }])
+      .instruction();
+    await this.sendBase(wallet, [join, delegate]);
+    return seat;
   }
 
   /** start_run + delegate_run in one transaction, signed by the host. */
   async startRun(wallet: WalletSigner, run: PublicKey, runId: BN) {
-    const start = await this.program.methods
-      .startRun()
-      .accountsPartial({ authority: wallet.publicKey, run })
-      .instruction();
+    const start = await this.program.methods.startRun().accountsPartial({ authority: wallet.publicKey, run }).instruction();
     const delegate = await this.program.methods
       .delegateRun(runId)
       .accountsPartial({ authority: wallet.publicKey, run })
@@ -292,14 +423,11 @@ export class Chain {
   }
 
   async settleRun(wallet: WalletSigner, run: PublicKey, state: RunState) {
+    const wallets = state.players.slice(0, state.playerCount).map((p) => ({ pubkey: p.wallet, isSigner: false, isWritable: true }));
     const ix = await this.program.methods
       .settleRun()
       .accountsPartial({ caller: wallet.publicKey, run, vault: vaultPda(run), authority: state.authority })
-      .remainingAccounts(
-        state.players
-          .slice(0, state.playerCount)
-          .map((p) => ({ pubkey: p.wallet, isSigner: false, isWritable: true })),
-      )
+      .remainingAccounts([...wallets, ...this.bagMetas(run, state.playerCount, false)])
       .instruction();
     return this.sendBase(wallet, [ix]);
   }
@@ -316,15 +444,59 @@ export class Chain {
     });
   }
 
-  // ---------- ER ----------
+  // ---------- ER: setup ----------
 
-  async move(session: Keypair, run: PublicKey, dir: number, confirm = true) {
-    const ix = await this.program.methods.movePlayer(dir).accountsPartial({ signer: session.publicKey, run }).instruction();
+  /** Makes your bag private on the TEE (idempotent). Retries until the ER has the bag. */
+  async ensureBagPermission(session: Keypair, run: PublicKey, seat: number) {
+    const bag = bagPda(run, seat);
+    const ix = await this.program.methods
+      .initBagPermission(seat)
+      .accountsPartial({
+        signer: session.publicKey,
+        run,
+        bag,
+        permission: permissionPdaFromAccount(bag),
+        permissionProgram: PERMISSION_PROGRAM_ID,
+        ephemeralVault: EPHEMERAL_VAULT_ID,
+        magicProgram: MAGIC_PROGRAM_ID,
+      })
+      .instruction();
+    return this.retryEr(() => this.sendEr(session, [ix]), "bag permission");
+  }
+
+  /** Gives the run its public permission on the TEE (idempotent). Retries until the ER has it. */
+  async ensureRunPermission(signer: Keypair, run: PublicKey) {
+    const ix = await this.program.methods
+      .initRunPermission()
+      .accountsPartial({
+        signer: signer.publicKey,
+        run,
+        permission: permissionPdaFromAccount(run),
+        permissionProgram: PERMISSION_PROGRAM_ID,
+        ephemeralVault: EPHEMERAL_VAULT_ID,
+        magicProgram: MAGIC_PROGRAM_ID,
+      })
+      .instruction();
+    return this.retryEr(() => this.sendEr(signer, [ix]), "run permission");
+  }
+
+  // ---------- ER: gameplay ----------
+
+  async move(session: Keypair, run: PublicKey, players: number, dir: number, confirm = true) {
+    const ix = await this.program.methods
+      .movePlayer(dir)
+      .accountsPartial({ signer: session.publicKey, run })
+      .remainingAccounts(this.bagMetas(run, players))
+      .instruction();
     return this.sendEr(session, [ix], confirm);
   }
 
-  async attack(session: Keypair, run: PublicKey, dir: number, confirm = true) {
-    const ix = await this.program.methods.attack(dir).accountsPartial({ signer: session.publicKey, run }).instruction();
+  async attack(session: Keypair, run: PublicKey, players: number, dir: number, confirm = true) {
+    const ix = await this.program.methods
+      .attack(dir)
+      .accountsPartial({ signer: session.publicKey, run })
+      .remainingAccounts(this.bagMetas(run, players))
+      .instruction();
     return this.sendEr(session, [ix], confirm);
   }
 
@@ -333,12 +505,13 @@ export class Chain {
     return this.sendEr(session, [ix]);
   }
 
-  async openChest(session: Keypair, run: PublicKey, chest: number) {
+  async openChest(session: Keypair, run: PublicKey, seat: number, chest: number) {
     const ix = await this.program.methods
       .openChest(chest)
       .accountsPartial({
         payer: session.publicKey,
         run,
+        bag: bagPda(run, seat),
         oracleQueue: EPHEMERAL_QUEUE,
         programIdentity: PROGRAM_IDENTITY,
         vrfProgram: VRF_PROGRAM_ID,
@@ -349,34 +522,40 @@ export class Chain {
     return this.sendEr(session, [ix]);
   }
 
-  /** Any session key (or the host's) can end a finished run; it commits back to base. */
-  async endRun(session: Keypair, run: PublicKey) {
+  /** Any session key (or the host's) can end a finished run; it commits run + bags to base. */
+  async endRun(session: Keypair, run: PublicKey, players: number) {
     const ix = await this.program.methods
       .endRun()
       .accountsPartial({ payer: session.publicKey, run, magicProgram: MAGIC_PROGRAM_ID, magicContext: MAGIC_CONTEXT_ID })
+      .remainingAccounts(this.bagMetas(run, players))
       .instruction();
     return this.sendEr(session, [ix]);
   }
 
-  /** Waits until the run is back on base (owner = our program) with the given status. */
-  async waitForBase(run: PublicKey, status: number, timeoutMs = 30_000): Promise<RunState> {
+  // ---------- waiting ----------
+
+  /** Waits until the run (and, given `players`, every bag) is back on base with the given status. */
+  async waitForBase(run: PublicKey, status: number, timeoutMs = 30_000, players = 0): Promise<RunState> {
     const t0 = Date.now();
     for (;;) {
       const info = await this.base.getAccountInfo(run);
       if (info && info.owner.equals(PROGRAM_ID)) {
         const s = this.decode(info.data);
-        if (s.status === status) return s;
+        if (s.status === status) {
+          const bags = players ? await this.base.getMultipleAccountsInfo(this.bags(run, players)) : [];
+          if (bags.every((b) => b && b.owner.equals(PROGRAM_ID))) return s;
+        }
       }
       if (Date.now() - t0 > timeoutMs) throw new Error("timed out waiting for the run to land on base");
-      await new Promise((r) => setTimeout(r, 500));
+      await sleep(500);
     }
   }
 
-  /** Waits until the ER can see the delegated run. */
-  async waitForEr(run: PublicKey, timeoutMs = 30_000): Promise<RunState> {
+  /** Waits until the ER can see the delegated run as live. */
+  async waitForEr(run: PublicKey, timeoutMs = 45_000): Promise<RunState> {
     const t0 = Date.now();
     for (;;) {
-      const info = await this.er.getAccountInfo(run).catch(() => null);
+      const info = await (await this.er()).getAccountInfo(run).catch(() => null);
       if (info) {
         try {
           const s = this.decode(info.data);
@@ -386,7 +565,7 @@ export class Chain {
         }
       }
       if (Date.now() - t0 > timeoutMs) throw new Error("timed out waiting for the ER to pick up the run");
-      await new Promise((r) => setTimeout(r, 300));
+      await sleep(400);
     }
   }
 }
