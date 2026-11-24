@@ -10,7 +10,7 @@ Stake SOL, loot a dungeon, fight other players, and get out alive: real-time PvP
 
 **Links**
 - Live (devnet): https://extraction-dungeon-three.vercel.app
-- Repo: <GitHub URL>
+- Repo: https://github.com/nisargpatel7042lva/extraction-dungeon
 - Video: <YouTube / Loom URL>
 - Program (devnet): 2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw
 
