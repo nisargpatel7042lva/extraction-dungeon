@@ -43,6 +43,8 @@ declare_id!("2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw");
 pub const RUN_SEED: &[u8] = b"run";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const BAG_SEED: &[u8] = b"bag";
+/// A lobby that hasn't started after this long can be cancelled (and refunded) by anyone.
+pub const LOBBY_TIMEOUT_SECS: i64 = 600;
 const PROGRAM_IDENTITY: Pubkey = program_identity_pubkey(&crate::ID);
 const VRF_CALLBACK_IDENTITY: Pubkey =
     Pubkey::new_from_array(scoped_vrf_identity_const(&crate::ID).0);
@@ -82,6 +84,7 @@ pub mod extraction_dungeon {
         run.bump = ctx.bumps.run;
         run.vault_bump = ctx.bumps.vault;
         run.layout = layout % map::NUM_MAPS;
+        run.created_at = Clock::get()?.unix_timestamp;
         Ok(())
     }
 
@@ -364,17 +367,15 @@ pub mod extraction_dungeon {
         Ok(())
     }
 
-    /// ER. Ends the run and commits + undelegates the run and every Bag to base. Allowed for the
-    /// authority at any time, or for anyone once the clock has run out or everyone is resolved.
+    /// ER. Ends the run and commits + undelegates the run and every Bag to base. Anyone can call it,
+    /// but only once the clock has run out or every player is out or dead. Nobody, the host
+    /// included, can cut a run short (while exits are locked that would trap everyone).
     /// remaining_accounts: every seat's Bag, in seat order.
     pub fn end_run<'info>(ctx: Context<'info, EndRun<'info>>) -> Result<()> {
         let run = &mut ctx.accounts.run;
         require!(run.status == RunStatus::Live as u8, DungeonError::NotLive);
         let now = Clock::get()?.unix_timestamp;
-        require!(
-            ctx.accounts.payer.key() == run.authority || now >= run.ends_at || run.all_resolved(),
-            DungeonError::CannotEndYet
-        );
+        require!(now >= run.ends_at || run.all_resolved(), DungeonError::CannotEndYet);
         let n = run.player_count as usize;
         require!(ctx.remaining_accounts.len() == n, DungeonError::BadBag);
         let run_key = run.key();
@@ -411,7 +412,7 @@ pub mod extraction_dungeon {
         for i in 0..n {
             points[i] = load_bag(bags, &run_key, i)?.points;
         }
-        let (shares, house) = run.payouts(&points);
+        let shares = run.payouts(&points);
         let vault = ctx.accounts.vault.to_account_info();
         for (i, w) in wallets.iter().enumerate() {
             require_keys_eq!(w.key(), run.players[i].wallet, DungeonError::WalletMismatch);
@@ -420,12 +421,39 @@ pub mod extraction_dungeon {
                 w.add_lamports(shares[i])?;
             }
         }
-        if house > 0 {
-            vault.sub_lamports(house)?;
-            ctx.accounts.authority.add_lamports(house)?;
-        }
         run.settled = true;
-        emit!(RunSettled { run: run.key(), shares, house, points });
+        emit!(RunSettled { run: run.key(), shares, points });
+        Ok(())
+    }
+
+    /// Base. Cancels a run that never started and refunds every stake. The host can cancel at any
+    /// time while it's in the lobby; anyone can once it has waited LOBBY_TIMEOUT_SECS, so stakes
+    /// are never stuck behind a host who walked away.
+    /// remaining_accounts: every seated wallet in seat order.
+    pub fn cancel_run<'info>(ctx: Context<'info, CancelRun<'info>>) -> Result<()> {
+        let run = &mut ctx.accounts.run;
+        require!(run.status == RunStatus::Lobby as u8, DungeonError::NotInLobby);
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            ctx.accounts.caller.key() == run.authority || now >= run.created_at.saturating_add(LOBBY_TIMEOUT_SECS),
+            DungeonError::CannotCancelYet
+        );
+        let n = run.player_count as usize;
+        require!(ctx.remaining_accounts.len() == n, DungeonError::WalletMismatch);
+        let vault = ctx.accounts.vault.to_account_info();
+        let mut refunded = 0u64;
+        for (i, w) in ctx.remaining_accounts.iter().enumerate() {
+            require_keys_eq!(w.key(), run.players[i].wallet, DungeonError::WalletMismatch);
+            if run.entry_lamports > 0 {
+                vault.sub_lamports(run.entry_lamports)?;
+                w.add_lamports(run.entry_lamports)?;
+                refunded = refunded.checked_add(run.entry_lamports).ok_or(DungeonError::Overflow)?;
+            }
+        }
+        require!(refunded == run.pot, DungeonError::Overflow);
+        run.pot = 0;
+        run.status = RunStatus::Cancelled as u8;
+        run.settled = true;
         Ok(())
     }
 }
@@ -454,7 +482,6 @@ fn load_bag<'info>(accounts: &'info [AccountInfo<'info>], run: &Pubkey, seat: us
 pub struct RunSettled {
     pub run: Pubkey,
     pub shares: [u64; MAX_PLAYERS],
-    pub house: u64,
     pub points: [u16; MAX_PLAYERS],
 }
 
@@ -617,13 +644,20 @@ pub struct EndRun<'info> {
 pub struct SettleRun<'info> {
     /// Anyone can trigger settlement.
     pub caller: Signer<'info>,
-    #[account(mut, has_one = authority)]
+    #[account(mut)]
     pub run: Account<'info, Run>,
     #[account(mut, seeds = [VAULT_SEED, run.key().as_ref()], bump = run.vault_bump)]
     pub vault: Account<'info, Vault>,
-    /// CHECK: receives the house remainder; pinned by `has_one`.
+}
+
+#[derive(Accounts)]
+pub struct CancelRun<'info> {
+    /// The host (any time in the lobby), or anyone after LOBBY_TIMEOUT_SECS.
+    pub caller: Signer<'info>,
     #[account(mut)]
-    pub authority: UncheckedAccount<'info>,
+    pub run: Account<'info, Run>,
+    #[account(mut, seeds = [VAULT_SEED, run.key().as_ref()], bump = run.vault_bump)]
+    pub vault: Account<'info, Vault>,
 }
 
 #[error_code]
@@ -684,4 +718,6 @@ pub enum DungeonError {
     NotChanneling,
     #[msg("Still extracting: hold still a moment longer")]
     StillChanneling,
+    #[msg("Only the host can cancel this lobby yet")]
+    CannotCancelYet,
 }

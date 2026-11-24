@@ -27,7 +27,10 @@ Solana when the run ends.
 4. **Back to Solana.** When the timer runs out, or everyone is dead or out, the run **and every bag** are committed and
    undelegated. The bags are now public, so everyone sees what everyone had.
 5. **Settle.** Players who extracted split the pot **in proportion to their loot points**. Anyone trapped or slain gets nothing.
-   If nobody makes it out, the house keeps the pot.
+   If nobody makes it out, every stake is refunded. The host never takes a cut, and nobody (host included) can
+   end a run before the timer runs out or every player is out or dead.
+6. **Lobbies can't trap stakes.** The host can cancel a lobby that hasn't started and refund every stake
+   (`cancel_run`); if the host walks away, anyone can do it after 10 minutes.
 
 The tension is the whole game: every second you stay, there's more loot and more chance someone takes your bag. And you
 never know whether the player walking at you is carrying 1 point or 20.
@@ -177,16 +180,18 @@ npm run dev                                             # client (localhost uses
 Open with `?net=devnet` to point a local client at devnet.
 
 ## Tests
-- **6 unit tests:** proportional split, equal split for empty bags, nobody extracted goes to the house, integer dust goes to the house, tier boundaries.
-- **9 MagicSVM scenarios:** stakes, seat rules and bags delegated at join · permissions created only by the owner, and
+- **8 unit tests:** proportional split, equal split for empty bags, nobody extracted refunds every stake, integer dust
+  goes to the best bag, tier boundaries, Vault tiers, and every map fully connected.
+- **18 MagicSVM scenarios:** stakes, seat rules and bags delegated at join · permissions created only by the owner, and
   **opponents can't read each other's bags** · movement/walls/chests/session keys · chest tiers land in the private bag, not
   the run · attack cooldown (rejected one slot early, accepted on time) · death → private bag into the sack → looted →
-  extract → settle (winner takes exactly the pot) · bags can't be swapped between seats · timer runs out → house ·
-  1:3 split between two extractors.
+  extract → settle (winner takes exactly the pot) · bags can't be swapped between seats · timer runs out → every stake refunded ·
+  1:3 split between two extractors · **the host can't end a run early to grab the pot** · host cancel refunds
+  everyone · anyone can cancel an abandoned lobby after the timeout · live runs can't be cancelled · loot + extract
+  on every map · exits locked, channeling, cooldown and interrupt rules.
 - **Devnet smoke test (TEE):** 17 checks, including owner-only bag reads (an opponent and an anonymous viewer are both
   refused), VRF on the TEE, the cooldown, hidden sack contents, bags public after the run, and the exact payout.
 
 ## Not done yet
-- Touch controls (the game needs a keyboard).
 - Collectible mints for legendary drops.
 - Closing finished run accounts to reclaim rent.

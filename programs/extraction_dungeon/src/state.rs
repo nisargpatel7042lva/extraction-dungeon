@@ -17,6 +17,8 @@ pub enum RunStatus {
     Lobby = 0,
     Live = 1,
     Ended = 2,
+    /// Never started; every stake was refunded.
+    Cancelled = 3,
 }
 
 #[repr(u8)]
@@ -121,6 +123,8 @@ pub struct Run {
     pub vault_bump: u8,
     /// Which of `map::MAPS` this run is played on (picked by the client at creation).
     pub layout: u8,
+    /// Unix time the run was created; lobbies that never start can be cancelled after a timeout.
+    pub created_at: i64,
 }
 
 /// One player's loot. Delegated to the TEE rollup with a permission that only that player's
@@ -188,17 +192,28 @@ impl Run {
             .collect()
     }
 
-    /// Splits the pot given each seat's bag points. Returns (per-seat payout, house remainder).
+    /// Splits the pot given each seat's bag points. Every lamport goes back to the players: the
+    /// host never takes a cut, so ending or abandoning a run can't profit them.
     /// - Extracted players share the pot in proportion to bag points.
     /// - Extracted with empty bags only: equal split.
-    /// - Nobody extracted: everything to the house.
-    /// Integer dust goes to the house, so payouts + house == pot exactly.
-    pub fn payouts(&self, points: &[u16; MAX_PLAYERS]) -> ([u64; MAX_PLAYERS], u64) {
+    /// - Nobody extracted: every seat gets its stake back.
+    /// Integer dust goes to the best-scoring extracted player, so payouts sum to the pot exactly.
+    pub fn payouts(&self, points: &[u16; MAX_PLAYERS]) -> [u64; MAX_PLAYERS] {
         let mut out = [0u64; MAX_PLAYERS];
         let seated = self.seated();
+        let n = seated.len();
+        if n == 0 {
+            return out;
+        }
+        let pot = self.pot as u128;
         let n_ext = seated.iter().filter(|p| p.extracted).count() as u128;
         if n_ext == 0 {
-            return (out, self.pot);
+            let each = pot / n as u128;
+            for o in out.iter_mut().take(n) {
+                *o = each as u64;
+            }
+            out[0] += (pot - each * n as u128) as u64;
+            return out;
         }
         let total: u128 = seated
             .iter()
@@ -206,8 +221,8 @@ impl Run {
             .filter(|(_, p)| p.extracted)
             .map(|(i, _)| points[i] as u128)
             .sum();
-        let pot = self.pot as u128;
         let mut paid = 0u128;
+        let mut best: Option<usize> = None;
         for (i, p) in seated.iter().enumerate() {
             if !p.extracted {
                 continue;
@@ -215,8 +230,14 @@ impl Run {
             let share = if total == 0 { pot / n_ext } else { pot * points[i] as u128 / total };
             out[i] = share as u64;
             paid += share;
+            if best.map_or(true, |b| points[i] > points[b]) {
+                best = Some(i);
+            }
         }
-        (out, (pot - paid) as u64)
+        if let Some(b) = best {
+            out[b] += (pot - paid) as u64;
+        }
+        out
     }
 }
 
@@ -247,38 +268,41 @@ mod tests {
             bump: 0,
             vault_bump: 0,
             layout: 0,
+            created_at: 0,
         };
         (run, points)
     }
 
-    fn conserved(r: &Run, pts: &[u16; MAX_PLAYERS]) -> ([u64; MAX_PLAYERS], u64) {
-        let (s, h) = r.payouts(pts);
-        assert_eq!(s.iter().sum::<u64>() + h, r.pot, "payouts + house must equal pot");
-        (s, h)
+    fn conserved(r: &Run, pts: &[u16; MAX_PLAYERS]) -> [u64; MAX_PLAYERS] {
+        let s = r.payouts(pts);
+        assert_eq!(s.iter().sum::<u64>(), r.pot, "payouts must equal the pot");
+        s
     }
 
     #[test]
     fn proportional_to_bag_points_among_extracted() {
         let (r, p) = run_with(400, &[(true, 3), (true, 1), (false, 8)]);
-        assert_eq!(conserved(&r, &p), ([300, 100, 0, 0], 0));
+        assert_eq!(conserved(&r, &p), [300, 100, 0, 0]);
     }
 
     #[test]
     fn empty_bags_split_equally() {
         let (r, p) = run_with(300, &[(true, 0), (false, 5), (true, 0)]);
-        assert_eq!(conserved(&r, &p), ([150, 0, 150, 0], 0));
+        assert_eq!(conserved(&r, &p), [150, 0, 150, 0]);
     }
 
     #[test]
-    fn nobody_extracted_goes_to_house() {
+    fn nobody_extracted_refunds_every_stake() {
         let (r, p) = run_with(250, &[(false, 3), (false, 0)]);
-        assert_eq!(conserved(&r, &p), ([0; MAX_PLAYERS], 250));
+        assert_eq!(conserved(&r, &p), [125, 125, 0, 0]);
     }
 
     #[test]
-    fn integer_dust_goes_to_house() {
+    fn integer_dust_goes_to_the_best_bag() {
         let (r, p) = run_with(100, &[(true, 1), (true, 1), (true, 1)]);
-        assert_eq!(conserved(&r, &p), ([33, 33, 33, 0], 1));
+        assert_eq!(conserved(&r, &p), [34, 33, 33, 0]);
+        let (r, p) = run_with(100, &[(true, 1), (true, 2), (false, 9)]);
+        assert_eq!(conserved(&r, &p), [33, 67, 0, 0]);
     }
 
     #[test]

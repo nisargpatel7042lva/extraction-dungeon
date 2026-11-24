@@ -98,6 +98,61 @@ export type ExtractionDungeon = {
       ]
     },
     {
+      "name": "cancelRun",
+      "docs": [
+        "Base. Cancels a run that never started and refunds every stake. The host can cancel at any",
+        "time while it's in the lobby; anyone can once it has waited LOBBY_TIMEOUT_SECS, so stakes",
+        "are never stuck behind a host who walked away.",
+        "remaining_accounts: every seated wallet in seat order."
+      ],
+      "discriminator": [
+        216,
+        52,
+        168,
+        168,
+        53,
+        110,
+        75,
+        132
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "The host (any time in the lobby), or anyone after LOBBY_TIMEOUT_SECS."
+          ],
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "createRun",
       "docs": [
         "Base. Creates an empty lobby and its stake vault. The run PDA is pre-funded with rent for",
@@ -567,8 +622,9 @@ export type ExtractionDungeon = {
     {
       "name": "endRun",
       "docs": [
-        "ER. Ends the run and commits + undelegates the run and every Bag to base. Allowed for the",
-        "authority at any time, or for anyone once the clock has run out or everyone is resolved.",
+        "ER. Ends the run and commits + undelegates the run and every Bag to base. Anyone can call it,",
+        "but only once the clock has run out or every player is out or dead. Nobody, the host",
+        "included, can cut a run short (while exits are locked that would trap everyone).",
         "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
@@ -1177,13 +1233,6 @@ export type ExtractionDungeon = {
               }
             ]
           }
-        },
-        {
-          "name": "authority",
-          "writable": true,
-          "relations": [
-            "run"
-          ]
         }
       ],
       "args": []
@@ -1443,6 +1492,11 @@ export type ExtractionDungeon = {
       "code": 6027,
       "name": "stillChanneling",
       "msg": "Still extracting: hold still a moment longer"
+    },
+    {
+      "code": 6028,
+      "name": "cannotCancelYet",
+      "msg": "Only the host can cancel this lobby yet"
     }
   ],
   "types": [
@@ -1704,6 +1758,13 @@ export type ExtractionDungeon = {
               "Which of `map::MAPS` this run is played on (picked by the client at creation)."
             ],
             "type": "u8"
+          },
+          {
+            "name": "createdAt",
+            "docs": [
+              "Unix time the run was created; lobbies that never start can be cancelled after a timeout."
+            ],
+            "type": "i64"
           }
         ]
       }
@@ -1725,10 +1786,6 @@ export type ExtractionDungeon = {
                 4
               ]
             }
-          },
-          {
-            "name": "house",
-            "type": "u64"
           },
           {
             "name": "points",

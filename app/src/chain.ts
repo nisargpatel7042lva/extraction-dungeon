@@ -73,7 +73,9 @@ export const EPHEMERAL_QUEUE = new PublicKey("5hBR571xnXppuCPveTrctfTU7tJLSN94nq
 export const SLOT_HASHES = new PublicKey("SysvarS1otHashes111111111111111111111111111");
 
 export const Dir = { Up: 0, Right: 1, Down: 2, Left: 3 } as const;
-export const Status = { Lobby: 0, Live: 1, Ended: 2 } as const;
+export const Status = { Lobby: 0, Live: 1, Ended: 2, Cancelled: 3 } as const;
+/** Mirrors LOBBY_TIMEOUT_SECS: after this, anyone can cancel a lobby that never started. */
+export const LOBBY_TIMEOUT_SECS = 600;
 export const ChestState = { Closed: 0, Opening: 1, Opened: 2 } as const;
 export const TIER_NAMES: Record<number, string> = { 1: "COMMON", 2: "RARE", 3: "LEGENDARY" };
 export const TIER_POINTS: Record<number, number> = { 1: 1, 2: 3, 3: 8 };
@@ -255,6 +257,7 @@ export interface RunState {
   settled: boolean;
   /** Index into `MAPS`. */
   layout: number;
+  createdAt: BN;
 }
 /** A seat's private loot. Readable on the TEE only by that seat's session key. */
 export interface BagState {
@@ -527,11 +530,12 @@ export class Chain {
 
   // ---------- base layer ----------
 
-  async createRun(wallet: WalletSigner, entryLamports: number, durationSecs: number) {
+  /** Opens a run on `layout`, or on a random map when omitted. */
+  async createRun(wallet: WalletSigner, entryLamports: number, durationSecs: number, layout = Math.floor(Math.random() * MAPS.length)) {
     const runId = new BN(Date.now());
     const run = runPda(wallet.publicKey, runId);
     const ix = await this.program.methods
-      .createRun(runId, new BN(entryLamports), durationSecs, Math.floor(Math.random() * MAPS.length))
+      .createRun(runId, new BN(entryLamports), durationSecs, layout)
       .accountsPartial({ authority: wallet.publicKey, run, vault: vaultPda(run) })
       .instruction();
     await this.sendBase(wallet, [ix]);
@@ -613,8 +617,19 @@ export class Chain {
     const wallets = state.players.slice(0, state.playerCount).map((p) => ({ pubkey: p.wallet, isSigner: false, isWritable: true }));
     const ix = await this.program.methods
       .settleRun()
-      .accountsPartial({ caller: wallet.publicKey, run, vault: vaultPda(run), authority: state.authority })
+      .accountsPartial({ caller: wallet.publicKey, run, vault: vaultPda(run) })
       .remainingAccounts([...wallets, ...this.bagMetas(run, state.playerCount, false)])
+      .instruction();
+    return this.sendBase(wallet, [ix]);
+  }
+
+  /** Cancels a lobby that never started and refunds every seated wallet its stake. */
+  async cancelRun(wallet: WalletSigner, run: PublicKey, state: RunState) {
+    const wallets = state.players.slice(0, state.playerCount).map((p) => ({ pubkey: p.wallet, isSigner: false, isWritable: true }));
+    const ix = await this.program.methods
+      .cancelRun()
+      .accountsPartial({ caller: wallet.publicKey, run, vault: vaultPda(run) })
+      .remainingAccounts(wallets)
       .instruction();
     return this.sendBase(wallet, [ix]);
   }

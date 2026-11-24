@@ -31,7 +31,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "chest_open",
     title: "6. Get paid",
-    body: "When the run ends, the pot is split between everyone who got out, <b>in proportion to their loot points</b>. Press <b>Settle payouts</b> to send it.",
+    body: "When the run ends, the pot is split between everyone who got out, <b>in proportion to their loot points</b>. Press <b>Settle payouts</b> to send it. If nobody gets out, every stake is refunded.",
   },
 ];
 

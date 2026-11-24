@@ -114,7 +114,7 @@ async function main() {
   const sessions = [Keypair.generate(), Keypair.generate()];
   temps.push(...sessions);
 
-  const { run, runId } = await chain.createRun(host, ENTRY, DURATION);
+  const { run, runId } = await chain.createRun(host, ENTRY, DURATION, 0); // the scripted paths below are for map 0
   log("created run", run.toBase58());
   for (let i = 0; i < 2; i++) await chain.joinRun(keypairSigner(wallets[i]), run, sessions[i].publicKey);
   for (let i = 0; i < 2; i++) await chain.ensureBagPermission(sessions[i], run, i);

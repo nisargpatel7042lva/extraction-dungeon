@@ -10,10 +10,10 @@ use {
     extraction_dungeon::{
         accounts as acc, instruction as ixs, map,
         state::{
-            Bag, ChestState, Run, ATTACK_COOLDOWN_SLOTS, EXTRACT_CHANNEL_SLOTS, SESSION_TOPUP, START_HP, TIER_COMMON,
+            Bag, ChestState, Run, RunStatus, ATTACK_COOLDOWN_SLOTS, EXTRACT_CHANNEL_SLOTS, SESSION_TOPUP, START_HP, TIER_COMMON,
             TIER_LEGENDARY, TIER_RARE,
         },
-        BAG_SEED, RUN_SEED, VAULT_SEED,
+        BAG_SEED, LOBBY_TIMEOUT_SECS, RUN_SEED, VAULT_SEED,
     },
     magicsvm::{MagicSVM, TransactionTarget::{self, Base, Ephemeral}},
     solana_clock::Clock,
@@ -382,9 +382,18 @@ impl World {
         self.send(Ephemeral, &[signer], i)
     }
 
+    /// cancel_run signed by `caller`, refunding every seated wallet.
+    fn cancel_as(&mut self, caller: &Keypair) -> Result<(), String> {
+        let mut i = ix(self.program, ixs::CancelRun {}, acc::CancelRun { caller: pk(caller), run: self.run, vault: self.vault });
+        for w in &self.wallets {
+            i.accounts.push(AccountMeta::new(pk(w), false));
+        }
+        self.send(Base, &[caller], i)
+    }
+
     fn settle(&mut self) -> Result<(), String> {
         let mut i = ix(self.program, ixs::SettleRun {}, acc::SettleRun {
-            caller: pk(&self.authority), run: self.run, vault: self.vault, authority: pk(&self.authority),
+            caller: pk(&self.authority), run: self.run, vault: self.vault,
         });
         for w in &self.wallets {
             i.accounts.push(AccountMeta::new(pk(w), false));
@@ -405,6 +414,9 @@ const ATTACK_COOLDOWN: u32 = 6022;
 const EXITS_LOCKED: u32 = 6025;
 const NOT_CHANNELING: u32 = 6026;
 const STILL_CHANNELING: u32 = 6027;
+const CANNOT_END_YET: u32 = 6016;
+const BAD_BAG: u32 = 6024;
+const CANNOT_CANCEL_YET: u32 = 6028;
 
 #[test]
 fn join_takes_stakes_creates_delegated_bags_and_enforces_seats() {
@@ -604,17 +616,19 @@ fn bags_cannot_be_swapped_between_seats() {
         program_identity, vrf_program: VRF_PROGRAM_ID, slot_hashes: SLOT_HASHES, system_program: system_program::ID,
     });
     assert!(w.send(Ephemeral, &[&s], i).is_err(), "wrong bag rejected");
+    w.warp_seconds(DURATION as i64); // so only the bag order can fail end_run
     let a = w.authority.insecure_clone();
     let mut end = ix(w.program, ixs::EndRun {}, acc::EndRun {
         payer: pk(&a), run: w.run, magic_program: MagicProgram::id(), magic_context: MAGIC_CONTEXT_ID,
     });
     end.accounts.push(AccountMeta::new(w.bag(1), false));
     end.accounts.push(AccountMeta::new(w.bag(0), false));
-    assert!(w.send(Ephemeral, &[&a], end).is_err(), "bag order enforced");
+    let e = w.send(Ephemeral, &[&a], end).expect_err("bag order enforced");
+    assert!(err_code(&e, BAD_BAG), "{e}");
 }
 
 #[test]
-fn timer_runs_out_trapping_players_and_the_pot_goes_to_the_house() {
+fn timer_runs_out_with_nobody_out_and_every_stake_is_refunded() {
     let mut w = World::new(2);
     w.start();
     let s0 = w.sessions[0].insecure_clone();
@@ -622,10 +636,63 @@ fn timer_runs_out_trapping_players_and_the_pot_goes_to_the_house() {
     w.warp_seconds(DURATION as i64);
     assert!(w.act(0, ixs::MovePlayer { dir: DOWN }).is_err(), "time is up");
     w.end_as(&s0).unwrap();
-    let house_before = balance(&w.svm, Base, pk(&w.authority));
+    let host_before = balance(&w.svm, Base, pk(&w.authority));
+    let before: Vec<u64> = w.wallets.iter().map(|k| balance(&w.svm, Base, pk(k))).collect();
     w.settle().unwrap();
-    let gained = balance(&w.svm, Base, pk(&w.authority)) - house_before;
-    assert!(gained > 2 * ENTRY - 10_000 && gained <= 2 * ENTRY, "house got {gained}");
+    let gained: Vec<u64> = w.wallets.iter().zip(&before).map(|(k, b)| balance(&w.svm, Base, pk(k)) - b).collect();
+    assert_eq!(gained, vec![ENTRY, ENTRY], "nobody got out: stakes go back");
+    assert!(balance(&w.svm, Base, pk(&w.authority)) <= host_before, "the host takes no cut");
+}
+
+#[test]
+fn the_host_cannot_end_a_run_early_to_grab_the_pot() {
+    // The exploit this closes: host starts, ends at once while exits are still locked (so nobody
+    // can have extracted), and the no-winner pot used to go to the host.
+    let mut w = World::new(2);
+    w.start();
+    let host = w.authority.insecure_clone();
+    let e = w.end_as(&host).expect_err("host can't cut the run short");
+    assert!(err_code(&e, CANNOT_END_YET), "{e}");
+    w.warp_seconds(DURATION as i64 / 2);
+    assert!(w.end_as(&host).is_err(), "not halfway through either");
+}
+
+#[test]
+fn the_host_cancels_a_lobby_and_everyone_is_refunded() {
+    let mut w = World::new(2);
+    let host_before = balance(&w.svm, Base, pk(&w.authority));
+    let before: Vec<u64> = w.wallets.iter().map(|k| balance(&w.svm, Base, pk(k))).collect();
+    let host = w.authority.insecure_clone();
+    w.cancel_as(&host).unwrap();
+    let gained: Vec<u64> = w.wallets.iter().zip(&before).map(|(k, b)| balance(&w.svm, Base, pk(k)) - b).collect();
+    assert_eq!(gained, vec![ENTRY, ENTRY]);
+    assert!(balance(&w.svm, Base, pk(&w.authority)) <= host_before, "the host takes no cut");
+    let r = w.state(Base);
+    assert_eq!((r.status, r.pot), (RunStatus::Cancelled as u8, 0));
+    assert!(w.cancel_as(&host).is_err(), "no double refund");
+    assert!(w.join().is_err(), "can't join a cancelled run");
+}
+
+#[test]
+fn anyone_can_cancel_an_abandoned_lobby_after_the_timeout() {
+    let mut w = World::new(2);
+    let stranger = Keypair::new();
+    w.svm.airdrop(&stranger.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    let e = w.cancel_as(&stranger).expect_err("too early for a stranger");
+    assert!(err_code(&e, CANNOT_CANCEL_YET), "{e}");
+    w.warp_seconds(LOBBY_TIMEOUT_SECS);
+    let before: Vec<u64> = w.wallets.iter().map(|k| balance(&w.svm, Base, pk(k))).collect();
+    w.cancel_as(&stranger).unwrap();
+    let gained: Vec<u64> = w.wallets.iter().zip(&before).map(|(k, b)| balance(&w.svm, Base, pk(k)) - b).collect();
+    assert_eq!(gained, vec![ENTRY, ENTRY]);
+}
+
+#[test]
+fn a_started_run_cannot_be_cancelled() {
+    let mut w = World::new(2);
+    w.start();
+    let host = w.authority.insecure_clone();
+    assert!(w.cancel_as(&host).is_err(), "live runs settle by play, not refund");
 }
 
 #[test]
@@ -640,6 +707,8 @@ fn extracted_players_split_by_points() {
     w.walk_to(1, m().extract(3));
     w.extract(1).unwrap();
     let auth = w.authority.insecure_clone();
+    assert!(w.end_as(&auth).is_err(), "seat 2 is still in the dungeon");
+    w.warp_seconds(DURATION as i64);
     w.end_as(&auth).unwrap();
     let before: Vec<u64> = w.wallets.iter().map(|k| balance(&w.svm, Base, pk(k))).collect();
     w.settle().unwrap();

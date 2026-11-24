@@ -12,6 +12,7 @@ import {
   RunState,
   Status,
   TIER_NAMES,
+  LOBBY_TIMEOUT_SECS,
   WalletSigner,
   chainClock,
   exitsOpenAt,
@@ -354,6 +355,24 @@ function apply(s: RunState, isEr: boolean) {
     if (isEr) return void waitForBase();
     return void showEnded();
   }
+  if (s.status === Status.Cancelled) return void showCancelled();
+}
+
+/** A lobby that never started: every stake went back. */
+function showCancelled() {
+  const s = state!;
+  setMode("landing");
+  void returnSessionFunds();
+  void returnBotFunds();
+  screen.className = "card red";
+  screen.innerHTML = `
+    <div class="gameover">
+      <div class="go-title neon-red">CANCELLED</div>
+      <div class="go-sub">This lobby never started</div>
+      <p>${Number(s.entryLamports.toString()) > 0 ? `Every player got their <b class="neon-gold">${sol(s.entryLamports)} SOL</b> stake back.` : "It was a free run: nothing was staked."}</p>
+      <div class="row" style="justify-content:center"><button id="again" class="big pink">▶ New game</button></div>
+    </div>`;
+  $("again").addEventListener("click", newGame);
 }
 
 /** Makes your bag private on the TEE. Idempotent; safe to call again after a reload. */
@@ -423,6 +442,11 @@ function seatsHtml(s: RunState, compact = false) {
   );
 }
 
+/** Anyone may cancel a lobby once it has waited LOBBY_TIMEOUT_SECS (by the chain's clock). */
+function lobbyExpired(s: RunState) {
+  return chainClock.now() >= Number(s.createdAt.toString()) + LOBBY_TIMEOUT_SECS;
+}
+
 function showLobby() {
   const s = state!;
   setMode("landing");
@@ -466,7 +490,22 @@ function showLobby() {
         : ""
     }
     ${me >= 0 ? `<p class="muted">🔒 Your bag is private: only this tab can see what you carry.</p>` : ""}
-    ${isHost ? "" : `<p class="muted blink">Waiting for the host to press start…</p>`}`;
+    ${isHost ? "" : `<p class="muted blink">Waiting for the host to press start…</p>`}
+    ${
+      s.playerCount && (isHost || lobbyExpired(s))
+        ? `<div class="row"><button id="cancel" class="ghost small">✖ Cancel &amp; refund everyone</button></div>`
+        : s.playerCount
+          ? `<p class="muted" style="font-size:16px">If the host never starts, anyone can cancel and refund every stake from ${new Date((Number(s.createdAt.toString()) + LOBBY_TIMEOUT_SECS) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>`
+          : ""
+    }`;
+  $("cancel")?.addEventListener("click", () =>
+    guarded("Cancel", async () => {
+      if (!confirm("Cancel this lobby and refund every stake?")) return;
+      ($("cancel") as HTMLButtonElement).disabled = true;
+      await chain.cancelRun(wallet!, runKey!, s);
+      toast("Lobby cancelled: every stake refunded");
+    }),
+  );
   screen.querySelectorAll<HTMLButtonElement>(".bot-add").forEach((b) =>
     b.addEventListener("click", () =>
       guarded("Add bot", async () => {
@@ -668,7 +707,9 @@ async function showEnded() {
   const extracted = s.players.slice(0, s.playerCount).map((p, i) => ({ p, i })).filter(({ p }) => p.extracted);
   const total = extracted.reduce((a, { i }) => a + points[i], 0);
   const pot = Number(s.pot.toString());
+  // Mirrors Run::payouts: extracted players split by loot; if nobody got out, every stake goes back.
   const share = (i: number) => {
+    if (!extracted.length) return Math.floor(pot / s.playerCount);
     if (!s.players[i].extracted) return 0;
     return total === 0 ? Math.floor(pot / extracted.length) : Math.floor((pot * points[i]) / total);
   };
@@ -678,7 +719,7 @@ async function showEnded() {
   const iTopped = !!best && best.i === me;
   const practice = pot === 0;
   const title = !best
-    ? { t: "GAME OVER", cls: "neon-red", sub: "Nobody made it out. The pot goes to the house." }
+    ? { t: "GAME OVER", cls: "neon-red", sub: practice ? "Nobody made it out" : "Nobody made it out: every stake is refunded" }
     : iWon
       ? { t: iTopped ? (practice ? "STAGE CLEAR!" : "YOU WIN!") : "YOU ESCAPED!", cls: "neon-gold", sub: practice ? `Practice run · ${points[me]} pts banked` : "Extracted players split the pot by loot" }
       : me >= 0
@@ -700,7 +741,7 @@ async function showEnded() {
         <td><span class="who"><img src="/sprites/hero${i}.png" alt="" />${name}</span></td>
         <td>${fate}</td>
         <td class="r">${points[i]}</td>
-        <td class="r">${p.extracted ? (practice ? "-" : sol(share(i))) : "0"}</td>
+        <td class="r">${practice ? "-" : sol(share(i))}</td>
       </tr>`;
     })
     .join("");
@@ -766,7 +807,12 @@ async function showEnded() {
       await returnBotFunds();
     }),
   );
-  $("again").addEventListener("click", () => {
+  $("again").addEventListener("click", newGame);
+}
+
+/** Back to the create screen for a fresh run. */
+function newGame() {
+  {
     history.replaceState(null, "", location.pathname + (params.get("net") ? `?net=${net}` : "") + (params.has("dev") ? `${params.get("net") ? "&" : "?"}dev=1` : ""));
     runKey = null;
     state = null;
@@ -776,7 +822,7 @@ async function showEnded() {
     unsub?.();
     scene?.resetRun();
     showCreate();
-  });
+  }
 }
 
 // ---------- input ----------
