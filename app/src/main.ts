@@ -18,6 +18,8 @@ import {
 } from "./chain";
 import { DungeonScene, SEAT_COLORS, startGame } from "./game";
 import { connectPhantom, devWallet, hasPhantom, sessionKey } from "./wallet";
+import { Bot, BotLevel, LEVELS } from "./bot";
+import bs58 from "bs58";
 import { initGuide } from "./guide";
 import { isMuted, setMuted, sfx } from "./sound";
 
@@ -56,6 +58,83 @@ let myBag: BagState | null = null;
 let bagUnsub: (() => void) | null = null;
 const revealedChests = new Set<number>();
 let lastAttackAt = 0;
+
+// ---------- AI bots (run by the host's tab) ----------
+interface BotRec {
+  seat: number;
+  level: BotLevel;
+  wallet: Keypair;
+  session: Keypair;
+  brain?: Bot;
+}
+let bots: BotRec[] = [];
+
+function botKey(run: PublicKey) {
+  return `ed:bots:${run.toBase58()}`;
+}
+function saveBots() {
+  if (!runKey) return;
+  try {
+    sessionStorage.setItem(
+      botKey(runKey),
+      JSON.stringify(bots.map((b) => ({ seat: b.seat, level: b.level, wallet: bs58.encode(b.wallet.secretKey), session: bs58.encode(b.session.secretKey) }))),
+    );
+  } catch {
+    /* storage blocked: bots won't survive a reload */
+  }
+}
+function loadBots(run: PublicKey) {
+  bots = [];
+  try {
+    const raw = sessionStorage.getItem(botKey(run));
+    if (!raw) return;
+    bots = (JSON.parse(raw) as { seat: number; level: BotLevel; wallet: string; session: string }[]).map((b) => ({
+      seat: b.seat,
+      level: b.level,
+      wallet: Keypair.fromSecretKey(bs58.decode(b.wallet)),
+      session: Keypair.fromSecretKey(bs58.decode(b.session)),
+    }));
+  } catch {
+    bots = [];
+  }
+}
+function botAt(seat: number) {
+  return bots.find((b) => b.seat === seat);
+}
+function who(seat: number, wallet0: PublicKey) {
+  const b = botAt(seat);
+  return b ? `🤖 ${LEVELS[b.level].label} bot` : short(wallet0);
+}
+
+async function addBot(level: BotLevel) {
+  const wallet0 = Keypair.generate();
+  const session0 = Keypair.generate();
+  const seat = await chain.joinBot(wallet!, runKey!, wallet0, session0.publicKey);
+  bots.push({ seat, level, wallet: wallet0, session: session0 });
+  saveBots();
+  if (state?.status === Status.Lobby) showLobby(); // the chain update may have rendered before we knew it's a bot
+  toast(`${LEVELS[level].label} bot joined. Making its bag private…`);
+  await chain.ensureBagPermission(session0, runKey!, seat).catch((e) => toast(`Bot bag permission: ${friendly(e)}`, true));
+}
+
+function startBots() {
+  for (const b of bots) {
+    if (b.brain) continue;
+    b.brain = new Bot(chain, runKey!, b.seat, b.session, b.level, () => state);
+    b.brain.start();
+  }
+}
+
+/** After the payout, send the bots' winnings and leftover fees back to the host's wallet. */
+async function returnBotFunds() {
+  if (!wallet || !bots.length) return;
+  let total = 0;
+  for (const b of bots) {
+    b.brain?.stop();
+    for (const kp of [b.wallet, b.session]) total += await chain.sweep(kp, wallet.publicKey).catch(() => 0);
+  }
+  if (total > 0) toast(`Returned ${sol(total)} SOL from your bots to your wallet`);
+}
 
 const sol = (lamports: { toString(): string } | number) => (Number(lamports.toString()) / LAMPORTS_PER_SOL).toFixed(3);
 const short = (k: PublicKey) => k.toBase58().slice(0, 4) + "…" + k.toBase58().slice(-4);
@@ -194,6 +273,7 @@ function showCreate() {
 
 async function openRun(run: PublicKey) {
   session = sessionKey(run);
+  loadBots(run);
   const got = await chain.fetchRun(run);
   if (!got) {
     setMode("landing");
@@ -248,7 +328,9 @@ async function waitForEr() {
   setMode("landing");
   screen.innerHTML = `<h2>Opening the dungeon…</h2><p class="muted">Handing the run to the Private Ephemeral Rollup.</p>`;
   try {
-    if (mySeat() >= 0 && session) await chain.ensureRunPermission(session, runKey!).catch(() => {});
+    // Any seated identity can set the run's public permission: you, or one of your bots.
+    const setter = mySeat() >= 0 ? session : bots[0]?.session;
+    if (setter) await chain.ensureRunPermission(setter, runKey!).catch(() => {});
     const s = await chain.waitForEr(runKey!);
     apply(s, true);
     watch();
@@ -284,7 +366,9 @@ function seatsHtml(s: RunState, compact = false) {
         const tag = p.extracted ? `<span class="tag out">out</span>` : !p.alive ? `<span class="tag dead">slain</span>` : "";
         const bag = i === me ? `${myBag?.points ?? 0}` : "?";
         const stat = s.status === Status.Lobby ? "" : `<span class="muted">${compact ? "" : "bag "}${bag} · ♥${p.hp} · ⚔${p.kills}</span>`;
-        return `<div class="seat"><span class="dot" style="background:${col}"></span><span class="mono">${i === me ? "you" : short(p.wallet)}</span>${tag}<span style="margin-left:auto">${stat}</span></div>`;
+        const bot = botAt(i);
+        const name = i === me ? "you" : bot ? `🤖 ${LEVELS[bot.level].label} bot` : short(p.wallet);
+        return `<div class="seat"><span class="dot" style="background:${col}"></span><span class="${bot ? "" : "mono"}">${name}</span>${tag}<span style="margin-left:auto">${stat}</span></div>`;
       })
       .join("") || `<p class="muted">Nobody yet.</p>`
   );
@@ -308,8 +392,31 @@ function showLobby() {
       ${isHost ? `<button id="start" ${s.playerCount ? "" : "disabled"}>Start run</button>` : ""}
       <button id="copy" class="ghost">Copy invite link</button>
     </div>
+    ${
+      isHost && s.playerCount < 4
+        ? `<div class="bots">
+            <div class="muted">No one to play with? Add an AI bot (it stakes the entry from your wallet; whatever it wins comes back to you):</div>
+            <div class="bot-levels">
+              ${(Object.keys(LEVELS) as BotLevel[]).map((l) => `<button class="ghost bot-add" data-level="${l}"><b>🤖 ${LEVELS[l].label}</b><small>${LEVELS[l].blurb}</small></button>`).join("")}
+            </div>
+          </div>`
+        : ""
+    }
     ${me >= 0 ? `<p class="muted">🔒 Your bag is private: only this browser tab can see what you carry.</p>` : ""}
+    ${bots.length ? `<p class="muted">🤖 Bots run in this browser tab: keep it open during the run.</p>` : ""}
     ${isHost ? "" : `<p class="muted">Waiting for the host to start.</p>`}`;
+  screen.querySelectorAll<HTMLButtonElement>(".bot-add").forEach((b) =>
+    b.addEventListener("click", () =>
+      guarded("Add bot", async () => {
+        screen.querySelectorAll<HTMLButtonElement>(".bot-add").forEach((x) => (x.disabled = true));
+        try {
+          await addBot(b.dataset.level as BotLevel);
+        } finally {
+          screen.querySelectorAll<HTMLButtonElement>(".bot-add").forEach((x) => (x.disabled = false));
+        }
+      }),
+    ),
+  );
   $("join")?.addEventListener("click", () =>
     guarded("Join", async () => {
       ($("join") as HTMLButtonElement).disabled = true;
@@ -337,6 +444,7 @@ function showLive() {
   screen.innerHTML = "";
   if (!scene) scene = startGame(gameEl);
   startClockSync();
+  startBots();
   watchMyBag();
   pushToScene();
   renderHud();
@@ -486,7 +594,11 @@ async function returnSessionFunds() {
 async function showEnded() {
   const s = state!;
   setMode("landing");
-  if (s.settled) void returnSessionFunds();
+  bots.forEach((b) => b.brain?.stop());
+  if (s.settled) {
+    void returnSessionFunds();
+    void returnBotFunds();
+  }
   const me = mySeat();
   // After the run every bag is back on base and public: now everyone sees what everyone had.
   const bags = await Promise.all(s.players.slice(0, s.playerCount).map((_, i) => chain.fetchBag(runKey!, i)));
@@ -498,10 +610,17 @@ async function showEnded() {
     if (!s.players[i].extracted) return 0;
     return total === 0 ? Math.floor(pot / extracted.length) : Math.floor((pot * points[i]) / total);
   };
-  const best = extracted.sort((a, b) => share(b.i) - share(a.i))[0];
+  const best = extracted.sort((a, b) => share(b.i) - share(a.i) || points[b.i] - points[a.i])[0];
+  const bestName = best ? (best.i === me ? "You" : who(best.i, best.p.wallet)) : "";
+  const banner = !best
+    ? `<p class="winner" style="color:var(--red)">Nobody got out</p>`
+    : pot === 0
+      ? `<p class="winner">${bestName} won the practice run with ${points[best.i]} pts</p>`
+      : `<p class="winner">${bestName} ${best.i === me ? "win" : "wins"} ${sol(share(best.i))} SOL</p>`;
   screen.innerHTML = `
     <h2>Run over</h2>
-    ${best ? `<p class="winner">${best.i === me ? "You win" : `${short(best.p.wallet)} wins`} ${sol(share(best.i))} SOL</p>` : `<p class="winner" style="color:var(--red)">Nobody got out</p>`}
+    ${banner}`;
+  screen.innerHTML += `
     ${s.players
       .slice(0, s.playerCount)
       .map((p, i) => {
@@ -510,7 +629,7 @@ async function showEnded() {
           : !p.alive
             ? `<span class="tag dead">slain</span>`
             : `<span class="tag dead">trapped · lost ${points[i]} pts</span>`;
-        return `<div class="seat"><span class="dot" style="background:${hexColor(SEAT_COLORS[i])}"></span><span class="mono">${i === me ? "you" : short(p.wallet)}</span>${fate}<b style="margin-left:auto">${sol(share(i))} SOL</b></div>`;
+        return `<div class="seat"><span class="dot" style="background:${hexColor(SEAT_COLORS[i])}"></span><span>${i === me ? "you" : who(i, p.wallet)}</span>${fate}<b style="margin-left:auto">${sol(share(i))} SOL</b></div>`;
       })
       .join("")}
     <p class="muted">${extracted.length ? "Extracted players split the pot by loot points. Bags are revealed now that the run is over." : "The pot goes to the house."}</p>
@@ -524,6 +643,7 @@ async function showEnded() {
       await chain.settleRun(wallet!, runKey!, s);
       toast("Paid out");
       await returnSessionFunds();
+      await returnBotFunds();
     }),
   );
   $("again").addEventListener("click", () => {
@@ -531,6 +651,7 @@ async function showEnded() {
     runKey = null;
     state = null;
     myBag = null;
+    bots = [];
     revealedChests.clear();
     unsub?.();
     showCreate();

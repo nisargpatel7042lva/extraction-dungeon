@@ -6,7 +6,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "hero0",
     title: "1. Join a run",
-    body: "Connect a wallet, then create a run or open an invite link and press <b>Join</b>. Your stake goes into the pot. Up to 4 players; the host presses <b>Start</b>.",
+    body: "Connect a wallet, then create a run or open an invite link and press <b>Join</b>. Your stake goes into the pot. Up to 4 players; the host presses <b>Start</b>. Playing alone? Add <b>🤖 Easy, Medium or Hard bots</b> from the lobby (set the stake to 0 for a free practice run).",
   },
   {
     img: "chest_closed",

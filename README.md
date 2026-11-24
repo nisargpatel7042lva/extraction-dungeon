@@ -113,6 +113,21 @@ flowchart LR
 | On screen | Your own moves are predicted instantly; chain state wins after 1.5 s if it disagrees |
 | VRF chest | ~0.7 s from open to tier in your bag |
 
+## Playing solo: AI bots
+No one to play with? The host can add **Easy, Medium or Hard** bots from the lobby
+(`app/src/bot.ts`). A bot is a real seated player: the host's wallet funds a fresh bot wallet and the bot
+joins on-chain in the same transaction (one approval), so it stakes, has its own private bag, and can be
+killed and looted. Its brain runs in the host's tab, reading the public run state and acting through its
+own session key on the rollup. After settle, the bots' wallets and session keys are swept back to the host.
+
+| Level | Plays like |
+|---|---|
+| Easy | Slow (~1 action/s), wanders, rarely fights, leaves early with little loot |
+| Medium | Loots steadily, fights back, grabs sacks, extracts with ~8 pts or a third of the run left |
+| Hard | Fast (~4 actions/s), hunts players in range, raids the Vault, ambushes anyone channeling at an exit, holds out for ~14 pts |
+
+Set the stake to 0 for a free practice run.
+
 ## Art
 The sprite set (four knights, chests, loot sack, exit portal, floor and wall textures) was generated with Figma's AI image
 generation in one consistent 16-bit style, each object on a flat magenta background. `app/scripts/sprites.ts` keys out the

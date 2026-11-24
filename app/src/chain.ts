@@ -454,6 +454,47 @@ export class Chain {
     return seat;
   }
 
+  /** Seats an AI bot: the host funds a fresh bot wallet and the bot joins, all in one transaction
+   *  (one wallet approval). The bot is then a normal player: it stakes, has a private bag, and can
+   *  be killed and looted. Returns the bot's seat. */
+  async joinBot(host: WalletSigner, run: PublicKey, bot: Keypair, botSession: PublicKey): Promise<number> {
+    const info = await this.base.getAccountInfo(run);
+    if (!info) throw new Error("run not found");
+    const s = this.decode(info.data);
+    const seat = s.playerCount;
+    const bag = bagPda(run, seat);
+    // Stake + the session top-up + bag & permission rent + fees, with margin. Leftovers are swept back.
+    const fund = Number(s.entryLamports.toString()) + 12_000_000;
+    const transfer = SystemProgram.transfer({ fromPubkey: host.publicKey, toPubkey: bot.publicKey, lamports: fund });
+    const join = await this.program.methods
+      .joinRun(botSession)
+      .accountsPartial({ player: bot.publicKey, run, vault: vaultPda(run), session: botSession, bag })
+      .instruction();
+    const delegate = await this.program.methods
+      .delegateBag(seat)
+      .accountsPartial({ payer: bot.publicKey, run, bag })
+      .remainingAccounts([{ pubkey: this.net.validator, isSigner: false, isWritable: false }])
+      .instruction();
+    await this.send(this.base, [transfer, join, delegate], host.publicKey, async (tx) => {
+      tx.partialSign(bot);
+      return host.signTransaction(tx);
+    });
+    return seat;
+  }
+
+  /** Sends everything left in a keypair's base account (minus the fee) to `to`. */
+  async sweep(from: Keypair, to: PublicKey): Promise<number> {
+    const bal = await this.base.getBalance(from.publicKey);
+    const FEE = 5000;
+    if (bal <= FEE) return 0;
+    const ix = SystemProgram.transfer({ fromPubkey: from.publicKey, toPubkey: to, lamports: bal - FEE });
+    await this.send(this.base, [ix], from.publicKey, async (t) => {
+      t.sign(from);
+      return t;
+    });
+    return bal - FEE;
+  }
+
   /** start_run + delegate_run in one transaction, signed by the host. */
   async startRun(wallet: WalletSigner, run: PublicKey, runId: BN) {
     const start = await this.program.methods.startRun().accountsPartial({ authority: wallet.publicKey, run }).instruction();

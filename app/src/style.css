@@ -109,6 +109,7 @@ kbd { background: var(--line); border-radius: 4px; padding: 1px 6px; font-family
 .features { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .features li { background: rgba(23, 20, 31, 0.7); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
 .features b { display: block; margin-bottom: 2px; }
+.features li:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .features span { color: var(--muted); font-size: 13.5px; }
 .card {
   background: var(--panel);
@@ -124,6 +125,11 @@ kbd { background: var(--line); border-radius: 4px; padding: 1px 6px; font-family
 .pot { display: flex; gap: 18px; margin: 4px 0 12px; }
 .pot div { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
 .pot b { font: 18px Silkscreen, monospace; display: block; }
+.bots { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13.5px; }
+.bot-levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.bot-add { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; }
+.bot-add small { color: var(--muted); font-weight: 400; font-size: 12px; line-height: 1.35; }
+@media (max-width: 520px) { .bot-levels { grid-template-columns: 1fr; } }
 .winner { font: 20px Silkscreen, monospace; color: var(--gold); margin: 0 0 8px; }
 
 @media (max-width: 860px) {
