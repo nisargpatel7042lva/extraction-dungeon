@@ -596,7 +596,7 @@
     {
       "name": "extract",
       "docs": [
-        "ER. Leave the dungeon from an extraction tile, keeping your bag."
+        "ER. Finishes a channeled extraction: you leave the dungeon with your bag."
       ],
       "discriminator": [
         39,
@@ -1179,6 +1179,34 @@
       "args": []
     },
     {
+      "name": "start_extract",
+      "docs": [
+        "ER. Starts channeling an extraction on an exit tile. Exits unlock a quarter of the way into",
+        "the run. Moving, attacking or getting hit cancels it; everyone can see you channeling."
+      ],
+      "discriminator": [
+        95,
+        24,
+        108,
+        68,
+        98,
+        159,
+        115,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "start_run",
       "docs": [
         "Base. Starts the clock. Sent in the same tx as `delegate_run`."
@@ -1390,6 +1418,21 @@
       "code": 6024,
       "name": "BadBag",
       "msg": "Bag accounts don't match the seats"
+    },
+    {
+      "code": 6025,
+      "name": "ExitsLocked",
+      "msg": "Exits are still locked"
+    },
+    {
+      "code": 6026,
+      "name": "NotChanneling",
+      "msg": "Not extracting: stand on an exit and start extracting first"
+    },
+    {
+      "code": 6027,
+      "name": "StillChanneling",
+      "msg": "Still extracting: hold still a moment longer"
     }
   ],
   "types": [
@@ -1543,6 +1586,13 @@
               "ER slot of this player's last attack (cooldown)."
             ],
             "type": "u64"
+          },
+          {
+            "name": "extract_start_slot",
+            "docs": [
+              "ER slot this player started channeling an extraction, or 0 if not channeling."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1609,7 +1659,7 @@
                     "name": "Chest"
                   }
                 },
-                6
+                11
               ]
             }
           },

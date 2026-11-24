@@ -14,6 +14,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  SYSVAR_CLOCK_PUBKEY,
   SystemProgram,
   Transaction,
   TransactionInstruction,
@@ -78,25 +79,52 @@ export const TIER_NAMES: Record<number, string> = { 1: "COMMON", 2: "RARE", 3: "
 export const TIER_POINTS: Record<number, number> = { 1: 1, 2: 3, 3: 8 };
 /** Mirrors ATTACK_COOLDOWN_SLOTS (36 slots at ~11ms). The program is the authority. */
 export const ATTACK_COOLDOWN_MS = 420;
+/** Mirrors EXTRACT_CHANNEL_SLOTS (180 slots at ~11ms), plus a little slack for slot jitter. */
+export const EXTRACT_CHANNEL_MS = 2100;
 
 /** Mirrors programs/extraction_dungeon/src/map.rs. */
 export const MAP = {
-  W: 12,
-  H: 9,
+  W: 20,
+  H: 13,
   LAYOUT: [
-    "############",
-    "#..........#",
-    "#.##....##.#",
-    "#..........#",
-    "#....##....#",
-    "#..........#",
-    "#.##....##.#",
-    "#..........#",
-    "############",
+    "####################",
+    "#....#........#....#",
+    "#.##.#..####..#.##.#",
+    "#..................#",
+    "###.##.##..##.##.###",
+    "#........##........#",
+    "#.#..#........#..#.#",
+    "#........##........#",
+    "###.##.##..##.##.###",
+    "#..................#",
+    "#.##.#..####..#.##.#",
+    "#....#........#....#",
+    "####################",
   ],
-  CHESTS: [[3, 1], [8, 1], [1, 4], [10, 4], [3, 7], [8, 7]] as [number, number][],
-  EXTRACTS: [[5, 3], [6, 5]] as [number, number][],
+  CHESTS: [
+    [3, 1], [16, 1], [3, 11], [16, 11],
+    [5, 3], [14, 3], [5, 9], [14, 9],
+    [1, 6], [18, 6],
+    [9, 6],
+  ] as [number, number][],
+  /** Index of the Vault chest (rare or legendary only). */
+  VAULT: 10,
+  EXTRACTS: [[3, 6], [16, 6], [9, 1], [10, 11]] as [number, number][],
 };
+
+/** On-chain time as the program sees it. The rollup's Clock sysvar runs a few seconds off device
+ *  clocks (measured ~2.5 s behind), so countdowns use `chainClock.now()` after `Chain.syncClock`. */
+export const chainClock = {
+  skew: 0,
+  now(): number {
+    return Date.now() / 1000 + this.skew;
+  },
+};
+
+/** Unix time at which exits unlock (a quarter of the way into the run). */
+export function exitsOpenAt(s: { endsAt: BN; durationSecs: number }): number {
+  return Number(s.endsAt.toString()) - Math.floor((s.durationSecs * 3) / 4);
+}
 
 export interface PlayerSlot {
   wallet: PublicKey;
@@ -108,6 +136,8 @@ export interface PlayerSlot {
   extracted: boolean;
   kills: number;
   lastAttackSlot: BN;
+  /** Non-zero while this player is channeling an extraction (public: everyone sees it). */
+  extractStartSlot: BN;
 }
 export interface RunState {
   authority: PublicKey;
@@ -205,6 +235,18 @@ export class Chain {
   }
 
   // ---------- reading ----------
+
+  /** Measures the rollup's clock against the device clock (half the round trip compensated). */
+  async syncClock(): Promise<number> {
+    const conn = await this.er();
+    const t0 = Date.now();
+    const info = await conn.getAccountInfo(SYSVAR_CLOCK_PUBKEY);
+    const t1 = Date.now();
+    if (!info) return chainClock.skew;
+    const unix = Number(info.data.readBigInt64LE(32));
+    chainClock.skew = unix - (t0 + t1) / 2000;
+    return chainClock.skew;
+  }
 
   decode(data: Buffer): RunState {
     return this.program.coder.accounts.decode("run", data) as RunState;
@@ -501,7 +543,13 @@ export class Chain {
     return this.sendEr(session, [ix], confirm);
   }
 
-  async extract(session: Keypair, run: PublicKey) {
+  /** Starts channeling an extraction (stand still ~2s, then `finishExtract`). */
+  async startExtract(session: Keypair, run: PublicKey) {
+    const ix = await this.program.methods.startExtract().accountsPartial({ signer: session.publicKey, run }).instruction();
+    return this.sendEr(session, [ix]);
+  }
+
+  async finishExtract(session: Keypair, run: PublicKey) {
     const ix = await this.program.methods.extract().accountsPartial({ signer: session.publicKey, run }).instruction();
     return this.sendEr(session, [ix]);
   }

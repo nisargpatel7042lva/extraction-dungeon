@@ -11,7 +11,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "chest_closed",
     title: "2. Loot chests",
-    body: "Move with <kbd>WASD</kbd> or the <kbd>arrow keys</kbd>. Walk into a chest to open it, and MagicBlock VRF rolls the loot: <b>common 1 pt</b> (60%), <b>rare 3 pts</b> (30%), <b>legendary 8 pts</b> (10%).",
+    body: "Move with <kbd>WASD</kbd>/<kbd>arrow keys</kbd>, or the on-screen pad on a phone. Walk into a chest to open it, and MagicBlock VRF rolls the loot: <b>common 1 pt</b> (60%), <b>rare 3 pts</b> (30%), <b>legendary 8 pts</b> (10%). The golden <b>Vault</b> in the middle never rolls common, so expect company.",
   },
   {
     img: "hero1",
@@ -26,7 +26,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "exit",
     title: "5. Get out",
-    body: "Stand on a green <b>EXIT</b> portal and press <kbd>E</kbd>. Only players who extract get paid. If the timer runs out while you're still inside, you're trapped and lose your loot.",
+    body: "The four green portals <b>unlock a quarter of the way in</b>. Stand on one, press <kbd>E</kbd> (or <b>EXIT</b>), and <b>hold still for 2 seconds</b> while a ring fills. Everyone can see you channeling, and a single hit cancels it. Only players who extract get paid. If the timer runs out while you're inside, you're trapped and lose your loot.",
   },
   {
     img: "chest_open",

@@ -5,6 +5,7 @@ import {
   BagState,
   Chain,
   ChestState,
+  EXTRACT_CHANNEL_MS,
   MAP,
   NETS,
   Net,
@@ -12,10 +13,13 @@ import {
   Status,
   TIER_NAMES,
   WalletSigner,
+  chainClock,
+  exitsOpenAt,
 } from "./chain";
 import { DungeonScene, SEAT_COLORS, startGame } from "./game";
 import { connectPhantom, devWallet, hasPhantom, sessionKey } from "./wallet";
 import { initGuide } from "./guide";
+import { isMuted, setMuted, sfx } from "./sound";
 
 // ---------- setup ----------
 
@@ -30,8 +34,12 @@ chain.onActionError = (m) => {
 
 const $ = (id: string) => document.getElementById(id)!;
 const screen = $("screen");
+const stage = $("stage");
 const hud = $("hud");
 const gameEl = $("game");
+
+const isTouch = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+document.body.classList.toggle("touch", isTouch);
 
 let wallet: WalletSigner | null = null;
 let runKey: PublicKey | null = params.get("run") ? new PublicKey(params.get("run")!) : null;
@@ -53,6 +61,7 @@ const sol = (lamports: { toString(): string } | number) => (Number(lamports.toSt
 const short = (k: PublicKey) => k.toBase58().slice(0, 4) + "…" + k.toBase58().slice(-4);
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const hexColor = (c: number) => "#" + c.toString(16).padStart(6, "0");
+const clock = (secs: number) => `${Math.floor(secs / 60)}:${String(Math.max(0, secs) % 60).padStart(2, "0")}`;
 
 function toast(msg: string, err = false) {
   const t = $("toast");
@@ -60,7 +69,7 @@ function toast(msg: string, err = false) {
   t.className = err ? "err" : "";
   t.hidden = false;
   clearTimeout((toast as any).h);
-  (toast as any).h = setTimeout(() => (t.hidden = true), err ? 6000 : 2500);
+  (toast as any).h = setTimeout(() => (t.hidden = true), err ? 5000 : 2500);
 }
 
 function friendly(e: unknown): string {
@@ -72,6 +81,7 @@ function friendly(e: unknown): string {
     const err = errors?.find((x) => x.code === code);
     if (err) return err.msg ?? err.name;
   }
+  if (/429|rate limit/i.test(m)) return "The network is busy, try again in a moment.";
   return m.length > 160 ? m.slice(0, 160) + "…" : m;
 }
 
@@ -89,26 +99,47 @@ function mySeat(): number {
   return state.players.slice(0, state.playerCount).findIndex((p) => p.wallet.equals(wallet!.publicKey));
 }
 
+// ---------- layout modes ----------
+
+function setMode(mode: "landing" | "live") {
+  document.body.classList.toggle("mode-live", mode === "live");
+  document.body.classList.toggle("mode-landing", mode === "landing");
+  stage.hidden = mode !== "live";
+  const h = (document.querySelector(".topbar") as HTMLElement).offsetHeight;
+  document.documentElement.style.setProperty("--topbar-h", `${h}px`);
+}
+window.addEventListener("resize", () => {
+  const h = (document.querySelector(".topbar") as HTMLElement).offsetHeight;
+  document.documentElement.style.setProperty("--topbar-h", `${h}px`);
+});
+
+const muteBtn = $("mute");
+const renderMute = () => (muteBtn.textContent = isMuted() ? "🔇" : "🔊");
+muteBtn.addEventListener("click", () => {
+  setMuted(!isMuted());
+  renderMute();
+});
+renderMute();
+
 // ---------- screens ----------
 
 function renderWallet() {
   $("wallet").innerHTML = wallet
-    ? `<span class="tag">${net}</span> <span class="mono">${short(wallet.publicKey)}</span>`
+    ? `<span class="tag">${net}</span><span class="mono">${short(wallet.publicKey)}</span>`
     : `<span class="tag">${net}</span>`;
 }
 
 function showConnect() {
-  hud.hidden = true;
+  setMode("landing");
   screen.innerHTML = `
     <h2>Enter the dungeon</h2>
-    <p class="muted">Stake SOL, loot chests, fight other players, and get out alive. Whatever you extract with is yours.
-    Every move runs on a MagicBlock Private Ephemeral Rollup: VRF decides what's in each chest, and nobody can see what you're carrying.</p>
+    <p class="muted">Connect a wallet to open a run or join one from an invite link.</p>
     <div class="row">
       ${NETS[net].airdrop || params.has("dev") ? `<button id="dev">Play with a dev wallet</button>` : ""}
       <button id="ph" class="${NETS[net].airdrop ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>
       <button class="ghost" data-guide>How to play</button>
     </div>
-    ${hasPhantom() ? "" : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`}
+    ${hasPhantom() ? "" : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>${isTouch ? " and open this page in Phantom's built-in browser" : ""}.</p>`}
     ${net === "devnet" ? `<p class="muted">Runs on Solana <b>devnet</b>: switch Phantom to devnet (Settings → Developer settings → Testnet mode) and grab free devnet SOL at <a href="https://faucet.solana.com" target="_blank" rel="noopener">faucet.solana.com</a>. A run costs about 0.02 SOL plus your stake.</p>` : ""}`;
   $("dev")?.addEventListener("click", () => guarded("Dev wallet", async () => connected(await devWallet(chain))));
   $("ph").addEventListener("click", () => guarded("Phantom", async () => connected(await connectPhantom())));
@@ -122,23 +153,41 @@ async function connected(w: WalletSigner) {
 }
 
 function showCreate() {
+  setMode("landing");
   screen.innerHTML = `
     <h2>Open a run</h2>
-    <label>Entry stake (SOL)</label><input id="entry" type="number" min="0" step="0.01" value="0.05" />
-    <label>Run length (seconds)</label><input id="dur" type="number" min="30" step="10" value="90" />
-    <div class="row"><button id="create">Create run</button><button class="ghost" data-guide>How to play</button></div>
-    <p class="muted">You'll get a link to share. Up to 4 players. Join your own run to play in it.</p>`;
+    <label>Entry stake (SOL)</label><input id="entry" type="number" min="0" step="0.01" value="0.05" inputmode="decimal" />
+    <label>Run length</label>
+    <div class="row" style="margin-top:0">
+      <button class="ghost small dur" data-d="120">2 min</button>
+      <button class="ghost small dur" data-d="180">3 min</button>
+      <button class="ghost small dur" data-d="300">5 min</button>
+    </div>
+    <input id="dur" type="hidden" value="180" />
+    <div class="row"><button id="create">Create run</button></div>
+    <p class="muted">You'll get a link to share with up to 3 friends. Join your own run to play in it.</p>`;
+  const durs = [...screen.querySelectorAll<HTMLButtonElement>(".dur")];
+  const pick = (b: HTMLButtonElement) => {
+    durs.forEach((x) => (x.style.borderColor = x === b ? "var(--gold)" : ""));
+    ($("dur") as HTMLInputElement).value = b.dataset.d!;
+  };
+  durs.forEach((b) => b.addEventListener("click", () => pick(b)));
+  pick(durs[1]);
   $("create").addEventListener("click", () =>
     guarded("Create", async () => {
       const entry = Math.round(Number(($("entry") as HTMLInputElement).value) * LAMPORTS_PER_SOL);
       const dur = Number(($("dur") as HTMLInputElement).value);
       ($("create") as HTMLButtonElement).disabled = true;
-      const { run } = await chain.createRun(wallet!, entry, dur);
-      const url = new URL(location.href);
-      url.searchParams.set("run", run.toBase58());
-      history.replaceState(null, "", url);
-      runKey = run;
-      await openRun(run);
+      try {
+        const { run } = await chain.createRun(wallet!, entry, dur);
+        const url = new URL(location.href);
+        url.searchParams.set("run", run.toBase58());
+        history.replaceState(null, "", url);
+        runKey = run;
+        await openRun(run);
+      } finally {
+        ($("create") as HTMLButtonElement | null)?.removeAttribute("disabled");
+      }
     }),
   );
 }
@@ -147,12 +196,12 @@ async function openRun(run: PublicKey) {
   session = sessionKey(run);
   const got = await chain.fetchRun(run);
   if (!got) {
+    setMode("landing");
     screen.innerHTML = `<h2>Run not found</h2><p class="muted mono">${run.toBase58()}</p><p class="muted">If the host just started it, give it a few seconds and reload.</p>`;
     return;
   }
   apply(got.state, got.onEr);
   watch();
-  // Re-entering a run you're seated in (e.g. after a reload): make sure your bag is private.
   const me = mySeat();
   if (me >= 0 && got.state.status !== Status.Ended) void protectBag(me);
 }
@@ -164,11 +213,13 @@ function watch() {
 }
 
 function apply(s: RunState, isEr: boolean) {
+  const wasLive = state?.status === Status.Live && onEr;
   state = s;
   onEr = isEr;
   if (s.status === Status.Lobby) return showLobby();
   if (s.status === Status.Live) {
     if (!isEr) return void waitForEr();
+    if (!wasLive) sfx.start();
     revealMyChests();
     return showLive();
   }
@@ -194,9 +245,9 @@ async function waitForEr() {
   if (waitingForEr || onEr) return;
   waitingForEr = true;
   unsub?.();
+  setMode("landing");
   screen.innerHTML = `<h2>Opening the dungeon…</h2><p class="muted">Handing the run to the Private Ephemeral Rollup.</p>`;
   try {
-    // The run's public permission lets every client read it on the TEE. Any seated player can set it.
     if (mySeat() >= 0 && session) await chain.ensureRunPermission(session, runKey!).catch(() => {});
     const s = await chain.waitForEr(runKey!);
     apply(s, true);
@@ -212,8 +263,7 @@ async function waitForBase() {
   unsub?.();
   bagUnsub?.();
   bagUnsub = null;
-  hud.hidden = true;
-  gameEl.hidden = true;
+  setMode("landing");
   screen.innerHTML = `<h2>Run over</h2><p class="muted">Committing the run and every bag back to Solana…</p>`;
   try {
     const s = await chain.waitForBase(runKey!, Status.Ended, 90_000, state?.playerCount ?? 0);
@@ -224,17 +274,17 @@ async function waitForBase() {
   }
 }
 
-function seatsHtml(s: RunState) {
+function seatsHtml(s: RunState, compact = false) {
   const me = mySeat();
   return (
     s.players
       .slice(0, s.playerCount)
       .map((p, i) => {
         const col = hexColor(SEAT_COLORS[i]);
-        const tag = p.extracted ? `<span class="tag out">extracted</span>` : !p.alive ? `<span class="tag dead">slain</span>` : "";
+        const tag = p.extracted ? `<span class="tag out">out</span>` : !p.alive ? `<span class="tag dead">slain</span>` : "";
         const bag = i === me ? `${myBag?.points ?? 0}` : "?";
-        const stat = s.status === Status.Lobby ? "" : `<span class="muted">bag ${bag} · ♥${p.hp} · ⚔${p.kills}</span>`;
-        return `<div class="seat"><span class="dot" style="background:${col}"></span><span class="mono">${short(p.wallet)}</span>${i === me ? `<span class="tag">you</span>` : ""}${tag}<span style="margin-left:auto">${stat}</span></div>`;
+        const stat = s.status === Status.Lobby ? "" : `<span class="muted">${compact ? "" : "bag "}${bag} · ♥${p.hp} · ⚔${p.kills}</span>`;
+        return `<div class="seat"><span class="dot" style="background:${col}"></span><span class="mono">${i === me ? "you" : short(p.wallet)}</span>${tag}<span style="margin-left:auto">${stat}</span></div>`;
       })
       .join("") || `<p class="muted">Nobody yet.</p>`
   );
@@ -242,19 +292,21 @@ function seatsHtml(s: RunState) {
 
 function showLobby() {
   const s = state!;
-  hud.hidden = true;
-  gameEl.hidden = true;
+  setMode("landing");
   const me = mySeat();
   const isHost = wallet!.publicKey.equals(s.authority);
   screen.innerHTML = `
     <h2>Lobby</h2>
-    <p class="muted">Entry <b>${sol(s.entryLamports)} SOL</b> · pot <b>${sol(s.pot)} SOL</b> · ${s.durationSecs}s run</p>
+    <div class="pot">
+      <div><small class="muted">Pot</small><b>${sol(s.pot)}</b></div>
+      <div><small class="muted">Entry</small><b>${sol(s.entryLamports)}</b></div>
+      <div><small class="muted">Run</small><b>${clock(s.durationSecs)}</b></div>
+    </div>
     ${seatsHtml(s)}
     <div class="row">
       ${me < 0 && s.playerCount < 4 ? `<button id="join">Join (${sol(s.entryLamports)} SOL)</button>` : ""}
       ${isHost ? `<button id="start" ${s.playerCount ? "" : "disabled"}>Start run</button>` : ""}
       <button id="copy" class="ghost">Copy invite link</button>
-      <button class="ghost" data-guide>How to play</button>
     </div>
     ${me >= 0 ? `<p class="muted">🔒 Your bag is private: only this browser tab can see what you carry.</p>` : ""}
     ${isHost ? "" : `<p class="muted">Waiting for the host to start.</p>`}`;
@@ -273,14 +325,18 @@ function showLobby() {
       await waitForEr();
     }),
   );
-  $("copy").addEventListener("click", () => navigator.clipboard.writeText(location.href).then(() => toast("Invite link copied")));
+  $("copy").addEventListener("click", () => {
+    const url = new URL(location.href);
+    url.searchParams.delete("dev");
+    navigator.clipboard.writeText(url.toString()).then(() => toast("Invite link copied"));
+  });
 }
 
 function showLive() {
+  setMode("live");
   screen.innerHTML = "";
-  gameEl.hidden = false;
-  hud.hidden = false;
   if (!scene) scene = startGame(gameEl);
+  startClockSync();
   watchMyBag();
   pushToScene();
   renderHud();
@@ -293,7 +349,10 @@ function watchMyBag() {
   const onBag = (b: BagState) => {
     const prev = myBag;
     myBag = b;
-    if (prev && b.points > prev.points) scene?.popAtSeat(me, `+${b.points - prev.points}`, "#f5c04a");
+    if (prev && b.points > prev.points) {
+      scene?.popAtSeat(me, `+${b.points - prev.points}`, "#f5c04a");
+      if (b.lastTier === prev.lastTier) sfx.pickup(); // a sack, not a chest
+    }
     revealMyChests();
     renderHud();
   };
@@ -308,17 +367,31 @@ function revealMyChests() {
   state.chests.forEach((c, i) => {
     if (c.state === ChestState.Opened && c.opener === me && !revealedChests.has(i)) {
       revealedChests.add(i);
-      scene?.revealChest(i, myBag!.lastTier, TIER_NAMES[myBag!.lastTier] ?? "?");
+      scene?.revealChest(i, myBag!.lastTier, `${i === MAP.VAULT ? "VAULT: " : ""}${TIER_NAMES[myBag!.lastTier] ?? "?"}`);
     }
   });
 }
 
+// Countdowns follow the rollup's clock, not the device's (they differ by seconds).
 function secondsLeft(): number {
-  return state ? Math.max(0, Number(state.endsAt.toString()) - Math.floor(Date.now() / 1000)) : 0;
+  return state ? Math.max(0, Math.ceil(Number(state.endsAt.toString()) - chainClock.now())) : 0;
 }
-
+function exitsIn(): number {
+  return state ? Math.max(0, Math.ceil(exitsOpenAt(state) - chainClock.now())) : 0;
+}
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+function startClockSync() {
+  if (clockTimer) return;
+  const sync = () => chain.syncClock().catch(() => {});
+  void sync();
+  clockTimer = setInterval(sync, 30_000);
+}
 function attackReady(): number {
   return Math.min(1, (performance.now() - lastAttackAt) / ATTACK_COOLDOWN_MS);
+}
+function channeling(): boolean {
+  const me = mySeat();
+  return !!state && me >= 0 && state.players[me].extractStartSlot.toString() !== "0";
 }
 
 function renderHud() {
@@ -330,21 +403,32 @@ function renderHud() {
   const resolved = s.players.slice(0, s.playerCount).every((x) => !x.alive || x.extracted);
   const canEnd = left === 0 || resolved;
   const pts = myBag?.points ?? 0;
-  const onExit = p && MAP.EXTRACTS.some(([x, y]) => x === p.x && y === p.y) && p.alive && !p.extracted;
+  const active = p && p.alive && !p.extracted;
+  const onExit = active && MAP.EXTRACTS.some(([x, y]) => x === p.x && y === p.y);
+  const xIn = exitsIn();
+
+  let msg = "";
+  if (p && !p.alive) msg = `<span style="color:var(--red)">You were slain. Your bag is on the floor as a sack.</span>`;
+  else if (p?.extracted) msg = `<span style="color:var(--green)">You got out with ${pts} pts.</span>`;
+  else if (channeling()) msg = `<span style="color:var(--green)">Extracting… hold still!</span>`;
+  else if (onExit && xIn > 0) msg = `<span class="muted">Exits unlock in <b class="xin">${clock(xIn)}</b></span>`;
+  else if (onExit) msg = `<span style="color:var(--green)">On the exit: press ${isTouch ? "<b>EXIT</b>" : "<kbd>E</kbd>"} and hold still for 2 s.</span>`;
+
   hud.innerHTML = `
-    <div class="muted">Time</div>
-    <div class="big timer ${left <= 15 ? "low" : ""}">${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}</div>
-    <div class="row" style="margin-top:8px">
-      <div><div class="muted">Pot</div><b>${sol(s.pot)} SOL</b></div>
-      ${p ? `<div><div class="muted">Your bag 🔒</div><b>${pts} pts</b></div>` : ""}
+    <div class="hud-box hud-main">
+      <div class="stat"><small>Time</small><b class="timer ${left <= 15 ? "low" : ""}">${clock(left)}</b></div>
+      <div class="stat"><small>Pot</small><b>${sol(s.pot)}</b></div>
+      ${p ? `<div class="stat"><small>Your bag 🔒</small><b>${pts}</b></div>` : ""}
+      <div class="stat"><small>Exits</small><b class="exits ${xIn ? "" : "open"}">${xIn ? clock(xIn) : "OPEN"}</b></div>
+      ${active ? `<div class="stat"><small>Attack</small><div class="meter"><i></i></div></div>` : ""}
     </div>
-    ${p && p.alive && !p.extracted ? `<div class="cooldown"><span class="muted">Attack</span><div class="bar"><i style="width:${attackReady() * 100}%"></i></div></div>` : ""}
-    <div style="margin-top:14px">${seatsHtml(s)}</div>
-    ${onExit ? `<p style="color:var(--green)">On the exit: press <kbd>E</kbd> to extract with ${pts} pts.</p>` : ""}
-    ${p && !p.alive ? `<p style="color:var(--red)">You were slain. Your bag is on the floor as a sack.</p>` : ""}
-    ${p?.extracted ? `<p style="color:var(--green)">You got out with ${pts} pts.</p>` : ""}
-    ${canEnd ? `<div class="row"><button id="end">End run</button></div>` : ""}
-    <div class="keys"><kbd>WASD</kbd>/<kbd>arrows</kbd> move · walk into a player to hit · walk into a chest to open · <kbd>E</kbd> extract · <a href="#" data-guide>guide</a></div>`;
+    <div class="hud-box hud-side"><div class="muted roster-title">Players</div>${seatsHtml(s, true)}</div>
+    <div class="hud-msg"><div class="hud-box">
+      ${msg}
+      ${canEnd ? `<button id="end" class="small">End run</button>` : ""}
+      ${!msg && !canEnd ? `<span class="keys"><kbd>WASD</kbd>/<kbd>arrows</kbd> move · bump to hit or open · <kbd>E</kbd> extract · <a href="#" data-guide>guide</a></span>` : ""}
+    </div></div>`;
+  if (!msg && !canEnd && isTouch) (hud.querySelector(".hud-msg") as HTMLElement).style.display = "none";
   $("end")?.addEventListener("click", () =>
     guarded("End", async () => {
       ($("end") as HTMLButtonElement).disabled = true;
@@ -352,25 +436,34 @@ function renderHud() {
       await waitForBase();
     }),
   );
+  document.getElementById("touch-extract")?.classList.toggle("locked", xIn > 0 || !active);
 }
 
-// Tick the clock and the attack meter in place: rebuilding the HUD every second would swallow clicks.
-let hudTimeWasZero = false;
+// Tick the clock, exits countdown and attack meter in place: rebuilding the HUD would swallow clicks.
+let hudZeroed = false;
+let exitsWereLocked = true;
 setInterval(() => {
   if (state?.status !== Status.Live || !onEr) return;
   const left = secondsLeft();
-  if (left === 0 && !hudTimeWasZero) {
-    hudTimeWasZero = true;
-    return renderHud(); // "End run" becomes available to everyone
+  const xIn = exitsIn();
+  if ((left === 0 && !hudZeroed) || (xIn === 0 && exitsWereLocked)) {
+    hudZeroed = left === 0;
+    exitsWereLocked = xIn > 0;
+    return renderHud();
   }
-  const el = hud.querySelector(".timer");
-  if (el) {
-    el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
-    el.classList.toggle("low", left <= 15);
+  exitsWereLocked = xIn > 0;
+  const t = hud.querySelector(".timer");
+  if (t) {
+    t.textContent = clock(left);
+    t.classList.toggle("low", left <= 15);
   }
+  const x = hud.querySelector(".exits");
+  if (x) x.textContent = xIn ? clock(xIn) : "OPEN";
+  hud.querySelectorAll(".xin").forEach((e) => (e.textContent = clock(xIn)));
+  if (left > 0 && left <= 10) sfx.tick();
 }, 1000);
 setInterval(() => {
-  const bar = hud.querySelector<HTMLElement>(".cooldown i");
+  const bar = hud.querySelector<HTMLElement>(".meter i");
   if (bar) {
     const r = attackReady();
     bar.style.width = `${r * 100}%`;
@@ -392,8 +485,7 @@ async function returnSessionFunds() {
 
 async function showEnded() {
   const s = state!;
-  gameEl.hidden = true;
-  hud.hidden = true;
+  setMode("landing");
   if (s.settled) void returnSessionFunds();
   const me = mySeat();
   // After the run every bag is back on base and public: now everyone sees what everyone had.
@@ -406,8 +498,10 @@ async function showEnded() {
     if (!s.players[i].extracted) return 0;
     return total === 0 ? Math.floor(pot / extracted.length) : Math.floor((pot * points[i]) / total);
   };
+  const best = extracted.sort((a, b) => share(b.i) - share(a.i))[0];
   screen.innerHTML = `
     <h2>Run over</h2>
+    ${best ? `<p class="winner">${best.i === me ? "You win" : `${short(best.p.wallet)} wins`} ${sol(share(best.i))} SOL</p>` : `<p class="winner" style="color:var(--red)">Nobody got out</p>`}
     ${s.players
       .slice(0, s.playerCount)
       .map((p, i) => {
@@ -416,10 +510,10 @@ async function showEnded() {
           : !p.alive
             ? `<span class="tag dead">slain</span>`
             : `<span class="tag dead">trapped · lost ${points[i]} pts</span>`;
-        return `<div class="seat"><span class="dot" style="background:${hexColor(SEAT_COLORS[i])}"></span><span class="mono">${short(p.wallet)}</span>${i === me ? `<span class="tag">you</span>` : ""}${fate}<b style="margin-left:auto">${sol(share(i))} SOL</b></div>`;
+        return `<div class="seat"><span class="dot" style="background:${hexColor(SEAT_COLORS[i])}"></span><span class="mono">${i === me ? "you" : short(p.wallet)}</span>${fate}<b style="margin-left:auto">${sol(share(i))} SOL</b></div>`;
       })
       .join("")}
-    <p class="muted">${extracted.length ? "Extracted players split the pot by loot points. Bags are revealed now that the run is over." : "Nobody got out: the pot goes to the house."}</p>
+    <p class="muted">${extracted.length ? "Extracted players split the pot by loot points. Bags are revealed now that the run is over." : "The pot goes to the house."}</p>
     <div class="row">
       ${s.settled ? `<span class="tag out">Paid out</span>` : `<button id="settle">Settle payouts</button>`}
       <button id="again" class="ghost">New run</button>
@@ -433,7 +527,7 @@ async function showEnded() {
     }),
   );
   $("again").addEventListener("click", () => {
-    history.replaceState(null, "", location.pathname + (params.get("net") ? `?net=${net}` : ""));
+    history.replaceState(null, "", location.pathname + (params.get("net") ? `?net=${net}` : "") + (params.has("dev") ? `${params.get("net") ? "&" : "?"}dev=1` : ""));
     runKey = null;
     state = null;
     myBag = null;
@@ -449,9 +543,7 @@ function step(x: number, y: number, dir: number): [number, number] {
   return [x + [0, 1, 0, -1][dir], y + [-1, 0, 1, 0][dir]];
 }
 
-/** One action in flight at a time, so they land in order. Taps while busy are buffered instead of
- *  dropped. Key-repeat is already throttled to one step per 120ms, so 8 only overflows if
- *  the ER stalls; dropping input there is better than a long tail of stale moves. */
+/** One action in flight at a time, so they land in order. Taps while busy are buffered. */
 const MAX_QUEUE = 8;
 let actionsSent = 0;
 function act(f: () => Promise<unknown>) {
@@ -479,8 +571,6 @@ function onDir(dir: number) {
 }
 
 // ---------- client-side prediction ----------
-// Moves take ~150ms to land on the TEE. We draw our own move immediately when the target tile is
-// walkable, and trust chain state again once it agrees or after 1.5s (rubber-band).
 let predicted: { x: number; y: number; at: number } | null = null;
 const PREDICT_MS = 1500;
 
@@ -494,7 +584,7 @@ function predict(x: number, y: number) {
   pushToScene();
 }
 
-/** The state the scene should draw: chain state, with our own position overridden by a fresh prediction. */
+/** Chain state, with our own position overridden by a fresh prediction. */
 function viewState(): RunState | null {
   const s = state;
   const me = mySeat();
@@ -513,11 +603,10 @@ function pushToScene() {
   const v = viewState();
   if (scene && v) scene.setState(v, mySeat());
 }
-setInterval(() => predicted && pushToScene(), 250); // lets an expired prediction snap back
+setInterval(() => predicted && pushToScene(), 250);
 
 /** Walking into a chest opens it, into a player hits them, otherwise moves. Decided when the
- *  action actually runs (not when the key was pressed), against the freshest state, including
- *  our own predicted position. */
+ *  action runs, against the freshest state (including our predicted position). */
 async function directed(dir: number) {
   const s = viewState();
   const me = mySeat();
@@ -532,20 +621,55 @@ async function directed(dir: number) {
   }
   const target = s.players.slice(0, s.playerCount).some((o) => o.alive && !o.extracted && o.x === tx && o.y === ty);
   if (target) {
-    // The program enforces the cooldown; skipping early saves a doomed transaction.
-    if (attackReady() < 1) return;
+    if (attackReady() < 1) return; // the program enforces the cooldown; skip doomed txs
     lastAttackAt = performance.now();
+    sfx.swing();
     await chain.attack(session!, runKey!, s.playerCount, dir, false);
     return;
   }
+  if (!walkable(tx, ty)) {
+    sfx.bump();
+    return;
+  }
   predict(tx, ty);
-  // Fire-and-forget: the queue moves on once the ER has the tx; the websocket state is the truth
-  // and a later failure (e.g. someone stepped into that tile first) shows up as a toast.
   await chain.move(session!, runKey!, s.playerCount, dir, false);
 }
 
+/** E / EXIT: start channeling, then finish automatically after ~2s if still channeling. */
+let finishing = false;
 function onExtract() {
-  if (session && runKey) act(() => chain.extract(session!, runKey!));
+  if (!session || !runKey || !state) return;
+  const me = mySeat();
+  const p = me >= 0 ? state.players[me] : null;
+  if (!p || !p.alive || p.extracted) return;
+  if (!MAP.EXTRACTS.some(([x, y]) => x === p.x && y === p.y)) return toast("Stand on a green EXIT portal first");
+  if (exitsIn() > 0) return toast(`Exits unlock in ${clock(exitsIn())}`);
+  if (channeling() || finishing) return;
+  act(async () => {
+    await chain.startExtract(session!, runKey!);
+    finishing = true;
+    renderHud();
+    setTimeout(() => void finish(0), EXTRACT_CHANNEL_MS);
+  });
+}
+
+async function finish(attempt: number): Promise<void> {
+  if (!channeling()) {
+    finishing = false; // moved or got hit: the program already cancelled it
+    renderHud();
+    return;
+  }
+  try {
+    await chain.finishExtract(session!, runKey!);
+    finishing = false;
+  } catch (e) {
+    if (/6027|0x178b/.test((e as Error).message) && attempt < 8) {
+      setTimeout(() => void finish(attempt + 1), 250); // slot jitter: a little longer
+      return;
+    }
+    finishing = false;
+    if (!/6026|0x178a/.test((e as Error).message)) toast(friendly(e), true);
+  }
 }
 
 const KEY_DIRS: Record<string, number> = {
@@ -559,9 +683,8 @@ window.addEventListener("keydown", (e) => {
   if (state?.status !== Status.Live || !onEr) return;
   if ((e.target as HTMLElement)?.tagName === "INPUT" || document.querySelector("dialog[open]")) return;
   const dir = KEY_DIRS[e.code];
-  if (dir === undefined && e.code !== "KeyE") return;
+  if (dir === undefined && e.code !== "KeyE" && e.code !== "Space") return;
   e.preventDefault();
-  // Holding a key repeats ~30/s; one step per 120ms is plenty and keeps the queue honest.
   const now = performance.now();
   if (e.repeat && now - lastKeyAt < 120) return;
   lastKeyAt = now;
@@ -569,12 +692,35 @@ window.addEventListener("keydown", (e) => {
   else onExtract();
 });
 
+// Touch: D-pad with hold-to-repeat, and the EXIT button.
+document.querySelectorAll<HTMLButtonElement>("#touch .dpad button").forEach((b) => {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const stop = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+    b.classList.remove("held");
+  };
+  b.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    b.classList.add("held");
+    const dir = Number(b.dataset.dir);
+    onDir(dir);
+    timer = setInterval(() => onDir(dir), 170);
+  });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((ev) => b.addEventListener(ev, stop));
+});
+$("touch-extract").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  onExtract();
+});
+
 // ---------- go ----------
 
 // Read-only debug handle for testing in the browser console.
 (window as any).__ed = {
   get seats() {
-    return state?.players.slice(0, state.playerCount).map((p) => ({ x: p.x, y: p.y, hp: p.hp, alive: p.alive, out: p.extracted }));
+    return state?.players.slice(0, state.playerCount).map((p) => ({ x: p.x, y: p.y, hp: p.hp, alive: p.alive, out: p.extracted, ch: p.extractStartSlot.toString() !== "0" }));
   },
   get myBag() {
     return myBag && { points: myBag.points, dropped: myBag.dropped, lastTier: myBag.lastTier };
@@ -591,6 +737,7 @@ window.addEventListener("keydown", (e) => {
   get dropped() {
     return state?.dropped.filter((b) => b.present);
   },
+  exitsIn,
 };
 
 initGuide();

@@ -8,6 +8,9 @@ pub const START_HP: u8 = 3;
 pub const SESSION_TOPUP: u64 = 4_000_000;
 /// ER slots are ~11ms on devnet, so 36 slots is ~400ms between attacks.
 pub const ATTACK_COOLDOWN_SLOTS: u64 = 36;
+/// Extracting is channeled: stand still on an exit for 180 slots (~2s). Moving, attacking or
+/// getting hit cancels it, and everyone can see you doing it.
+pub const EXTRACT_CHANNEL_SLOTS: u64 = 180;
 
 #[repr(u8)]
 pub enum RunStatus {
@@ -37,6 +40,14 @@ pub fn tier_for_roll(roll: u8) -> u8 {
     }
 }
 
+/// The Vault never rolls common: 55% rare, 45% legendary.
+pub fn vault_tier_for_roll(roll: u8) -> u8 {
+    match roll {
+        0..=55 => TIER_RARE,
+        _ => TIER_LEGENDARY,
+    }
+}
+
 pub fn points_for_tier(tier: u8) -> u16 {
     match tier {
         TIER_COMMON => 1,
@@ -61,6 +72,8 @@ pub struct PlayerSlot {
     pub kills: u8,
     /// ER slot of this player's last attack (cooldown).
     pub last_attack_slot: u64,
+    /// ER slot this player started channeling an extraction, or 0 if not channeling.
+    pub extract_start_slot: u64,
 }
 
 impl PlayerSlot {
@@ -146,6 +159,11 @@ impl Run {
         self.seated()
             .iter()
             .position(|p| p.active() && p.x == x && p.y == y)
+    }
+
+    /// Exits unlock once a quarter of the run has passed, so nobody can loot one chest and leave.
+    pub fn exits_open(&self, now: i64) -> bool {
+        now >= self.ends_at - (self.duration_secs as i64) * 3 / 4
     }
 
     /// Every seated player is dead or extracted.
@@ -258,6 +276,15 @@ mod tests {
     fn integer_dust_goes_to_house() {
         let (r, p) = run_with(100, &[(true, 1), (true, 1), (true, 1)]);
         assert_eq!(conserved(&r, &p), ([33, 33, 33, 0], 1));
+    }
+
+    #[test]
+    fn vault_never_rolls_common() {
+        for roll in 1..=100u8 {
+            assert_ne!(vault_tier_for_roll(roll), TIER_COMMON, "roll {roll}");
+        }
+        assert_eq!(vault_tier_for_roll(55), TIER_RARE);
+        assert_eq!(vault_tier_for_roll(56), TIER_LEGENDARY);
     }
 
     #[test]

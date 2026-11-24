@@ -221,6 +221,7 @@ pub mod extraction_dungeon {
         );
         run.players[i].x = nx;
         run.players[i].y = ny;
+        run.players[i].extract_start_slot = 0; // moving cancels an extraction
 
         let sacks = run.sacks_at(nx, ny);
         if !sacks.is_empty() {
@@ -253,6 +254,8 @@ pub mod extraction_dungeon {
         let (tx, ty) = map::step(p.x, p.y, dir).ok_or(DungeonError::BadDirection)?;
         let t = run.active_at(tx, ty).ok_or(DungeonError::NoTarget)?;
         run.players[i].last_attack_slot = slot;
+        run.players[i].extract_start_slot = 0; // attacking cancels your own extraction
+        run.players[t].extract_start_slot = 0; // and a hit interrupts the target's
         run.players[t].hp = run.players[t].hp.saturating_sub(1);
         if run.players[t].hp == 0 {
             run.kill(t);
@@ -317,7 +320,8 @@ pub mod extraction_dungeon {
         let (c, i) = (chest as usize, seat as usize);
         require!(c < map::NUM_CHESTS && i < MAX_PLAYERS, DungeonError::BadChest);
         require!(bag.run == run.key() && bag.seat == seat, DungeonError::BadBag);
-        let tier = tier_for_roll(random_u8_with_range(&randomness, 1, 100));
+        let roll = random_u8_with_range(&randomness, 1, 100);
+        let tier = if c == map::VAULT { vault_tier_for_roll(roll) } else { tier_for_roll(roll) };
         let pts = points_for_tier(tier);
         run.chests[c].state = ChestState::Opened as u8;
         bag.last_tier = tier;
@@ -329,13 +333,31 @@ pub mod extraction_dungeon {
         Ok(())
     }
 
-    /// ER. Leave the dungeon from an extraction tile, keeping your bag.
+    /// ER. Starts channeling an extraction on an exit tile. Exits unlock a quarter of the way into
+    /// the run. Moving, attacking or getting hit cancels it; everyone can see you channeling.
+    pub fn start_extract(ctx: Context<Act>) -> Result<()> {
+        let run = &mut ctx.accounts.run;
+        let i = acting_seat(run, &ctx.accounts.signer.key())?;
+        let p = run.players[i];
+        require!(map::is_extract(p.x, p.y), DungeonError::NotOnExtract);
+        require!(run.exits_open(Clock::get()?.unix_timestamp), DungeonError::ExitsLocked);
+        run.players[i].extract_start_slot = Clock::get()?.slot.max(1);
+        Ok(())
+    }
+
+    /// ER. Finishes a channeled extraction: you leave the dungeon with your bag.
     pub fn extract(ctx: Context<Act>) -> Result<()> {
         let run = &mut ctx.accounts.run;
         let i = acting_seat(run, &ctx.accounts.signer.key())?;
         let p = run.players[i];
         require!(map::is_extract(p.x, p.y), DungeonError::NotOnExtract);
+        require!(p.extract_start_slot != 0, DungeonError::NotChanneling);
+        require!(
+            Clock::get()?.slot >= p.extract_start_slot.saturating_add(EXTRACT_CHANNEL_SLOTS),
+            DungeonError::StillChanneling
+        );
         run.players[i].extracted = true;
+        run.players[i].extract_start_slot = 0;
         Ok(())
     }
 
@@ -653,4 +675,10 @@ pub enum DungeonError {
     BadSeat,
     #[msg("Bag accounts don't match the seats")]
     BadBag,
+    #[msg("Exits are still locked")]
+    ExitsLocked,
+    #[msg("Not extracting: stand on an exit and start extracting first")]
+    NotChanneling,
+    #[msg("Still extracting: hold still a moment longer")]
+    StillChanneling,
 }

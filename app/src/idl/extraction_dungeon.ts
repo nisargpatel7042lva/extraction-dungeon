@@ -602,7 +602,7 @@ export type ExtractionDungeon = {
     {
       "name": "extract",
       "docs": [
-        "ER. Leave the dungeon from an extraction tile, keeping your bag."
+        "ER. Finishes a channeled extraction: you leave the dungeon with your bag."
       ],
       "discriminator": [
         39,
@@ -1185,6 +1185,34 @@ export type ExtractionDungeon = {
       "args": []
     },
     {
+      "name": "startExtract",
+      "docs": [
+        "ER. Starts channeling an extraction on an exit tile. Exits unlock a quarter of the way into",
+        "the run. Moving, attacking or getting hit cancels it; everyone can see you channeling."
+      ],
+      "discriminator": [
+        95,
+        24,
+        108,
+        68,
+        98,
+        159,
+        115,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "startRun",
       "docs": [
         "Base. Starts the clock. Sent in the same tx as `delegate_run`."
@@ -1396,6 +1424,21 @@ export type ExtractionDungeon = {
       "code": 6024,
       "name": "badBag",
       "msg": "Bag accounts don't match the seats"
+    },
+    {
+      "code": 6025,
+      "name": "exitsLocked",
+      "msg": "Exits are still locked"
+    },
+    {
+      "code": 6026,
+      "name": "notChanneling",
+      "msg": "Not extracting: stand on an exit and start extracting first"
+    },
+    {
+      "code": 6027,
+      "name": "stillChanneling",
+      "msg": "Still extracting: hold still a moment longer"
     }
   ],
   "types": [
@@ -1549,6 +1592,13 @@ export type ExtractionDungeon = {
               "ER slot of this player's last attack (cooldown)."
             ],
             "type": "u64"
+          },
+          {
+            "name": "extractStartSlot",
+            "docs": [
+              "ER slot this player started channeling an extraction, or 0 if not channeling."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -1615,7 +1665,7 @@ export type ExtractionDungeon = {
                     "name": "chest"
                   }
                 },
-                6
+                11
               ]
             }
           },
