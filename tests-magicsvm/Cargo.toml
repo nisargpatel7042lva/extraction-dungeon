@@ -1,0 +1,19 @@
+[package]
+name = "extraction-dungeon-magicsvm-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+anchor-lang = "=1.1.2"
+magicsvm = "0.3.0"
+extraction_dungeon = { path = "../programs/extraction_dungeon", features = ["no-entrypoint"] }
+test-utils = { path = "../test-utils/rust", features = ["anchor"] }
+solana-address = "~2.6.1"
+solana-clock = "3"
+solana-instruction = { version = "~3.4.0", features = ["bincode"] }
+solana-keypair = "3.1.2"
+solana-native-token = "3.0.0"
+solana-signer = "3.0.1"

@@ -1,0 +1,26 @@
+{
+  "name": "extraction-dungeon-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@anchor-lang/core": "^1.1.2",
+    "@magicblock-labs/ephemeral-rollups-sdk": "^0.18.0",
+    "@solana/web3.js": "^1.99.0",
+    "bn.js": "^5.2.5",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.6"
+  }
+}
