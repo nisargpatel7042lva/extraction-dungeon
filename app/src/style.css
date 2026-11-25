@@ -714,7 +714,6 @@ body.touch .feed-row { font-size: 16px; padding: 4px 8px; }
   padding: 6px 9px;
 }
 .attract-tag i { width: 8px; height: 8px; background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink 1s steps(2, start) infinite; }
-body.mode-landing { background: transparent; }
 body.mode-live #attract { display: none; }
 @media (prefers-reduced-motion: reduce) { #bg-video { display: none; } #attract { background: var(--bg) url(/media/bg-poster.jpg) center / cover; } }
 @media (max-width: 860px) {
