@@ -9,7 +9,7 @@ import { sfx } from "./sound";
 
 export const TILE = 56;
 export const SEAT_COLORS = [0x5ab0ff, 0xff6ad5, 0xffa24a, 0xc9f24a];
-export const TIER_COLORS: Record<number, number> = { 1: 0x9aa0ad, 2: 0x5ab0ff, 3: 0xf5c04a };
+export const TIER_COLORS: Record<number, number> = { 1: 0x9aa0ad, 2: 0x5ab0ff, 3: 0xf5c04a, 4: 0xff4d6d };
 const UNKNOWN_TIER = 0x6b6280; // an opened chest someone else looted: you don't get to know what was in it
 const VAULT_GOLD = 0xf5c04a;
 // Never draw tiles smaller than this on screen; follow the player instead. Phones and tablets are held
@@ -41,6 +41,8 @@ export class DungeonScene extends Phaser.Scene {
   private knownTiers = new Map<number, number>();
   private exitsWereOpen = false;
   private following = false;
+  /** Vault Guardians: [0] shadow, [1] sprite, [2] hearts. */
+  private guardians: Phaser.GameObjects.Container[] = [];
   /** Seat the camera is locked onto (-1: none yet, e.g. your hero wasn't drawn when it tried). */
   private followingSeat = -1;
   /** Which `MAPS` layout the scene was built for. */
@@ -68,6 +70,7 @@ export class DungeonScene extends Phaser.Scene {
     this.knownTiers.clear();
     this.exitsWereOpen = false;
     this.followingSeat = -1;
+    this.guardians = [];
     this.builtLayout = MAP.layout;
     this.drawMap();
 
@@ -94,6 +97,48 @@ export class DungeonScene extends Phaser.Scene {
     }
 
     this.channelRings = this.add.graphics().setDepth(9);
+
+    // Vault Guardians: a pixel-art demon drawn in code (no extra asset), in the knights' 16-bit style.
+    if (!this.textures.exists("guardian")) {
+      const ART = [
+        "..K........K..",
+        ".KHK......KHK.",
+        ".KHHKKKKKKHHK.",
+        "..KPPPPPPPPK..",
+        ".KPPPPPPPPPPK.",
+        "KPPWWPPPPWWPPK",
+        "KPPWRPPPPRWPPK",
+        "KPPPPPPPPPPPPK",
+        "KDPPKKKKKKPPDK",
+        "KDPKWKWKWKKPDK",
+        "KDDPKKKKKKPDDK",
+        ".KDDPPPPPPDDK.",
+        ".KDK.KDDK.KDK.",
+        "..K...KK...K..",
+      ];
+      const COL: Record<string, number> = { K: 0x1a0f2e, H: 0xffd23d, P: 0x9b5cff, D: 0x5b2bb5, W: 0xffffff, R: 0xff2d55 };
+      const px = 4;
+      const g = this.make.graphics({}, false);
+      ART.forEach((row, y) =>
+        [...row].forEach((ch, x) => {
+          if (COL[ch] === undefined) return;
+          g.fillStyle(COL[ch], 1).fillRect(x * px, y * px, px, px);
+        }),
+      );
+      g.generateTexture("guardian", ART[0].length * px, ART.length * px);
+      g.destroy();
+    }
+    for (let k = 0; k < 2; k++) {
+      const shadow = this.add.ellipse(0, TILE * 0.36, TILE * 0.8, TILE * 0.26, 0xff2d55, 0.28);
+      const body = this.add.image(0, -2, "guardian").setDisplaySize(TILE * 0.98, TILE * 0.98);
+      const hp = this.add
+        .text(0, -TILE * 0.62, "", { fontFamily: "Silkscreen", fontSize: "13px", color: "#b98cff", stroke: "#0d0b12", strokeThickness: 3 })
+        .setOrigin(0.5);
+      const c = this.add.container(0, 0, [shadow, body, hp]).setVisible(false).setDepth(10);
+      this.tweens.add({ targets: body, y: -6, duration: 520, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }); // idle hover
+      this.tweens.add({ targets: shadow, alpha: 0.12, duration: 520, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      this.guardians.push(c);
+    }
 
     for (let i = 0; i < 4; i++) {
       // [0] "you" marker under the feet, [1] hero sprite, [2] hearts, [3] "YOU" tag
@@ -210,11 +255,13 @@ export class DungeonScene extends Phaser.Scene {
   /** Records the tier of a chest you opened and shows it. */
   revealChest(chest: number, tier: number, name: string) {
     this.knownTiers.set(chest, tier);
-    sfx.chest(tier);
+    if (tier === 4) sfx.hurt(); // a mimic bites
+    else sfx.chest(tier);
     if (!this.players.length) return;
     const [x, y] = MAP.CHESTS[chest];
     this.pop(center(x), y * TILE, name, hex(TIER_COLORS[tier] ?? 0xffffff), tier === 3 ? 22 : 15);
     if (tier === 3) this.cameras.main.flash(220, 245, 192, 74);
+    if (tier === 4) this.cameras.main.shake(180, 0.01);
     if (this.state) this.renderObjects(this.state);
   }
 
@@ -303,8 +350,45 @@ export class DungeonScene extends Phaser.Scene {
     });
   }
 
+  /** Vault Guardians: position, hearts, hit flashes, bites and deaths. */
+  private renderGuardians(prev: RunState | null, s: RunState) {
+    (s.monsters ?? []).forEach((g, k) => {
+      const c = this.guardians[k];
+      if (!c) return;
+      const was = prev?.monsters?.[k];
+      const tx = center(g.x);
+      const ty = center(g.y);
+      if (!g.alive) {
+        if (was?.alive) {
+          sfx.death();
+          this.pop(c.x, c.y, "GUARDIAN SLAIN", "#b98cff", 16);
+          this.tweens.add({ targets: c, alpha: 0, scale: 1.6, angle: 90, duration: 450, ease: "Cubic.easeIn", onComplete: () => c.setVisible(false) });
+        } else c.setVisible(false);
+        return;
+      }
+      if (!c.visible || !was) c.setPosition(tx, ty).setVisible(true).setAlpha(1).setScale(1).setAngle(0);
+      else if (c.x !== tx || c.y !== ty) {
+        this.tweens.add({ targets: c, x: tx, y: ty, duration: 140, ease: "Quad.easeOut" });
+        if (tx !== c.x) (c.list[1] as Phaser.GameObjects.Image).setFlipX(tx < c.x);
+      }
+      (c.list[2] as Phaser.GameObjects.Text).setText("♥".repeat(g.hp));
+      const body = c.list[1] as Phaser.GameObjects.Image;
+      if (was && g.hp < was.hp) {
+        sfx.hit();
+        this.pop(c.x, c.y - 10, "-1", "#ff5a6a");
+        body.setTintFill(0xffffff);
+        this.time.delayedCall(80, () => body.clearTint());
+      }
+      // A bite: lunge when its last-attack slot moves.
+      if (was && g.lastAttackSlot.toString() !== was.lastAttackSlot.toString()) {
+        this.tweens.add({ targets: body, scale: body.scale * 1.25, duration: 90, yoyo: true });
+      }
+    });
+  }
+
   private render(prev: RunState | null, s: RunState) {
     this.renderObjects(s);
+    this.renderGuardians(prev, s);
     this.time.delayedCall(0, () => {
       if (this.following && this.followingSeat !== this.mySeat) this.followMe();
     });

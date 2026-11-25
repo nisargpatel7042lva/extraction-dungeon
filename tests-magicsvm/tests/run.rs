@@ -11,7 +11,8 @@ use {
         accounts as acc, instruction as ixs, map,
         state::{
             Bag, ChestState, Run, RunStatus, ATTACK_COOLDOWN_SLOTS, EXTRACT_CHANNEL_SLOTS, SESSION_TOPUP, START_HP, TIER_COMMON,
-            TIER_LEGENDARY, TIER_RARE,
+            TIER_LEGENDARY, TIER_MIMIC, TIER_RARE, MONSTER_ATTACK_SLOTS, MONSTER_BOUNTY, MONSTER_HP, MONSTER_LEASH,
+            MONSTER_TICK_SLOTS,
         },
         BAG_SEED, LOBBY_TIMEOUT_SECS, RUN_SEED, VAULT_SEED,
     },
@@ -288,7 +289,33 @@ impl World {
 
     fn others(&self, seat: usize) -> Vec<(u8, u8)> {
         let s = self.state(Ephemeral);
-        s.seated().iter().enumerate().filter(|(i, p)| *i != seat && p.active()).map(|(_, p)| (p.x, p.y)).collect()
+        let mut v: Vec<(u8, u8)> = s.seated().iter().enumerate().filter(|(i, p)| *i != seat && p.active()).map(|(_, p)| (p.x, p.y)).collect();
+        v.extend(s.monsters.iter().filter(|g| g.alive).map(|g| (g.x, g.y)));
+        v
+    }
+
+    fn tick(&mut self, seat: usize) -> Result<(), String> {
+        self.act(seat, ixs::TickMonsters {})
+    }
+
+    /// Walks next to guardian `mi` and hits it until it dies.
+    fn slay_guardian(&mut self, seat: usize, mi: usize) {
+        let g = self.state(Ephemeral).monsters[mi];
+        let sides: Vec<((u8, u8), u8)> = (0..4u8)
+            .filter_map(|d| {
+                let from = map::step(g.x, g.y, d)?;
+                (!m().is_wall(from.0, from.1) && !m().is_chest(from.0, from.1)).then_some((from, (d + 2) % 4))
+            })
+            .collect();
+        let goals: Vec<(u8, u8)> = sides.iter().map(|(t, _)| *t).collect();
+        let dirs = route(self.pos(seat), &goals, &self.others(seat));
+        self.walk(seat, &dirs);
+        let here = self.pos(seat);
+        let dir = sides.iter().find(|(t, _)| *t == here).unwrap().1;
+        for _ in 0..MONSTER_HP {
+            self.hit_and_wait(seat, dir);
+        }
+        assert!(!self.state(Ephemeral).monsters[mi].alive, "guardian {mi} slain");
     }
 
     fn walk(&mut self, seat: usize, dirs: &[u8]) {
@@ -414,6 +441,7 @@ const ATTACK_COOLDOWN: u32 = 6022;
 const EXITS_LOCKED: u32 = 6025;
 const NOT_CHANNELING: u32 = 6026;
 const STILL_CHANNELING: u32 = 6027;
+const BLOCKED: u32 = 6009;
 const CANNOT_END_YET: u32 = 6016;
 const BAD_BAG: u32 = 6024;
 const CANNOT_CANCEL_YET: u32 = 6028;
@@ -497,11 +525,13 @@ fn chest_tiers_land_in_the_private_bag_not_the_run() {
 fn the_vault_never_rolls_common() {
     let mut w = World::new(1);
     w.start();
+    w.slay_guardian(0, 0);
     w.loot(0, map::VAULT, 10); // a roll that would be common anywhere else
     let bag = w.read_bag(Ephemeral, 0);
-    assert_eq!((bag.points, bag.last_tier), (3, TIER_RARE), "vault rolls rare at worst");
+    assert_eq!((bag.points, bag.last_tier), (MONSTER_BOUNTY + 3, TIER_RARE), "vault rolls rare at worst");
     let mut w = World::new(1);
     w.start();
+    w.slay_guardian(0, 0);
     w.loot(0, map::VAULT, 90);
     assert_eq!(w.read_bag(Ephemeral, 0).last_tier, TIER_LEGENDARY);
 }
@@ -699,7 +729,7 @@ fn a_started_run_cannot_be_cancelled() {
 fn extracted_players_split_by_points() {
     let mut w = World::new(3);
     w.start();
-    w.loot(0, 0, 10); // common, 1
+    w.loot(0, 0, 30); // common, 1
     w.loot(1, 3, 80); // (16,11) rare, 3
     w.unlock_exits();
     w.walk_to(0, m().extract(2));
@@ -730,4 +760,124 @@ fn every_map_plays_on_chain() {
         w.extract(0).unwrap_or_else(|e| panic!("{}: {e}", m().name()));
         assert!(w.state(Ephemeral).players[0].extracted, "{}", m().name());
     }
+}
+
+#[test]
+fn a_mimic_bites_and_pays_nothing() {
+    let mut w = World::new(1);
+    w.start();
+    w.loot(0, 0, 50); // common: 1 pt
+    w.loot(0, 4, 5); // mimic
+    let bag = w.read_bag(Ephemeral, 0);
+    assert_eq!((bag.points, bag.last_tier), (1, TIER_MIMIC), "a mimic pays nothing and keeps what you had");
+    let s = w.state(Ephemeral);
+    assert_eq!(s.players[0].hp, START_HP - 1, "a mimic bites for 1");
+    assert!(s.players[0].alive);
+    assert_eq!(s.chests[4].state, ChestState::Opened as u8, "a mimic is used up");
+}
+
+#[test]
+fn a_mimic_can_kill_and_the_bag_drops_as_a_sack() {
+    let mut w = World::new(1);
+    w.start();
+    w.loot(0, 0, 50); // common: 1 pt
+    for chest in [4, 8, 2] {
+        w.loot(0, chest, 5); // three mimics: 3 HP gone
+    }
+    let s = w.state(Ephemeral);
+    assert!(!s.players[0].alive, "the third bite kills");
+    assert_eq!(s.players[0].kills, 0);
+    assert!(s.dropped[0].present && s.dropped[0].points == 0, "a sack drops, contents hidden");
+    let bag = w.read_bag(Ephemeral, 0);
+    assert_eq!((bag.points, bag.dropped), (0, 1), "the bag's loot is in the sack");
+}
+
+#[test]
+fn the_vault_is_never_a_mimic() {
+    let mut w = World::new(1);
+    w.start();
+    w.slay_guardian(0, 0);
+    w.loot(0, map::VAULT, 1); // the lowest roll there is
+    let bag = w.read_bag(Ephemeral, 0);
+    assert_eq!((bag.points, bag.last_tier), (MONSTER_BOUNTY + 3, TIER_RARE));
+    assert_eq!(w.state(Ephemeral).players[0].hp, START_HP);
+}
+
+#[test]
+fn guardians_spawn_beside_the_vault_and_block_it() {
+    let mut w = World::new(1);
+    w.start();
+    let (vx, vy) = m().chest(map::VAULT);
+    let s = w.state(Ephemeral);
+    for (i, x) in [vx - 1, vx + 1].into_iter().enumerate() {
+        let g = s.monsters[i];
+        assert!(g.alive && (g.x, g.y) == (x, vy) && g.hp == MONSTER_HP, "guardian {i} at its post");
+    }
+    // Walk up to the left guardian and try to step into it.
+    let g = s.monsters[0];
+    let dirs = route(w.pos(0), &[(g.x - 1, g.y)], &w.others(0));
+    w.walk(0, &dirs);
+    let e = w.act(0, ixs::MovePlayer { dir: 1 }).expect_err("can't walk through a guardian");
+    assert!(err_code(&e, BLOCKED), "{e}");
+}
+
+#[test]
+fn slaying_a_guardian_pays_a_private_bounty() {
+    let mut w = World::new(1);
+    w.start();
+    w.slay_guardian(0, 0);
+    assert_eq!(w.read_bag(Ephemeral, 0).points, MONSTER_BOUNTY);
+    assert_eq!(w.state(Ephemeral).players[0].kills, 0, "guardians don't count as player kills");
+}
+
+#[test]
+fn a_guardian_chases_bites_and_ticks_are_rate_limited() {
+    let mut w = World::new(1);
+    w.start();
+    let g = w.state(Ephemeral).monsters[0];
+    // Stand two steps from the guardian's post: inside its leash, not adjacent.
+    let dirs = route(w.pos(0), &[(g.x - 2, g.y)], &w.others(0));
+    w.walk(0, &dirs);
+    w.tick(0).unwrap();
+    let g1 = w.state(Ephemeral).monsters[0];
+    assert_eq!((g1.x, g1.y), (g.x - 1, g.y), "it steps toward the player");
+    w.tick(0).unwrap(); // same slot: no-op
+    assert_eq!(w.state(Ephemeral).players[0].hp, START_HP, "ticks closer than MONSTER_TICK_SLOTS do nothing");
+    w.advance_slots(MONSTER_TICK_SLOTS);
+    w.tick(0).unwrap();
+    assert_eq!(w.state(Ephemeral).players[0].hp, START_HP - 1, "adjacent: it bites");
+    w.advance_slots(MONSTER_TICK_SLOTS);
+    w.tick(0).unwrap();
+    assert_eq!(w.state(Ephemeral).players[0].hp, START_HP - 1, "bites have their own cooldown");
+    w.advance_slots(MONSTER_ATTACK_SLOTS);
+    w.tick(0).unwrap();
+    assert_eq!(w.state(Ephemeral).players[0].hp, START_HP - 2);
+    // Walk away past its leash: it goes home.
+    let far = route(w.pos(0), &[(1, 1)], &w.others(0));
+    w.walk(0, &far);
+    for _ in 0..(MONSTER_LEASH as usize + 2) {
+        w.advance_slots(MONSTER_TICK_SLOTS);
+        w.tick(0).unwrap();
+    }
+    let g2 = w.state(Ephemeral).monsters[0];
+    assert_eq!((g2.x, g2.y), (g.x, g.y), "back at its post");
+}
+
+#[test]
+fn a_guardian_can_kill_and_the_bag_drops_as_a_sack() {
+    let mut w = World::new(1);
+    w.start();
+    w.loot(0, 0, 50); // common: 1 pt
+    let g = w.state(Ephemeral).monsters[0];
+    let dirs = route(w.pos(0), &[(g.x - 1, g.y)], &w.others(0));
+    w.walk(0, &dirs);
+    for _ in 0..START_HP {
+        w.advance_slots(MONSTER_ATTACK_SLOTS);
+        w.tick(0).unwrap();
+    }
+    let s = w.state(Ephemeral);
+    assert!(!s.players[0].alive, "three bites kill");
+    assert!(s.dropped[0].present && s.dropped[0].points == 0, "a sack drops, contents hidden");
+    let bag = w.read_bag(Ephemeral, 0);
+    assert_eq!((bag.points, bag.dropped), (0, 1));
 }

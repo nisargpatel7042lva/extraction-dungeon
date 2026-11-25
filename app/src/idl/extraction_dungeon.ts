@@ -15,8 +15,9 @@ export type ExtractionDungeon = {
     {
       "name": "attack",
       "docs": [
-        "ER. Hits the active player on the adjacent tile in `dir` for 1 damage, at most once per",
-        "ATTACK_COOLDOWN_SLOTS. A kill drops the victim's whole bag on their tile.",
+        "ER. Hits the active player (or Vault Guardian) on the adjacent tile in `dir` for 1 damage, at",
+        "most once per ATTACK_COOLDOWN_SLOTS. A kill drops the victim's whole bag on their tile;",
+        "killing a guardian pays MONSTER_BOUNTY into the attacker's private bag.",
         "remaining_accounts: every seat's Bag, in seat order."
       ],
       "discriminator": [
@@ -50,7 +51,9 @@ export type ExtractionDungeon = {
       "name": "callbackOpenChest",
       "docs": [
         "VRF callback. The tier goes into the opener's private Bag; the Run only learns \"opened\".",
-        "Loot goes into the opener's bag, or their sack if they died while it was opening."
+        "Loot goes into the opener's bag, or their sack if they died while it was opening.",
+        "A mimic pays nothing and bites the opener for 1 damage (cancelling any extraction); if that",
+        "kills them, their bag drops as a sack like any other death, with no killer credited."
       ],
       "discriminator": [
         229,
@@ -1294,6 +1297,37 @@ export type ExtractionDungeon = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "tickMonsters",
+      "docs": [
+        "ER. Advances the Vault Guardians by one step: each chases the nearest player near its home,",
+        "bites (1 damage, interrupts extraction) when adjacent, or walks back home. Any seated session",
+        "key may call it (the host's client does, every ~0.6 s); calls closer together than",
+        "MONSTER_TICK_SLOTS are no-ops, so extra callers can't speed the monsters up.",
+        "remaining_accounts: every seat's Bag, in seat order (a bite can kill)."
+      ],
+      "discriminator": [
+        6,
+        37,
+        237,
+        220,
+        236,
+        229,
+        18,
+        147
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1599,6 +1633,48 @@ export type ExtractionDungeon = {
       }
     },
     {
+      "name": "monster",
+      "docs": [
+        "A Vault Guardian. Public: everyone sees where it is and how hurt it is."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "x",
+            "type": "u8"
+          },
+          {
+            "name": "y",
+            "type": "u8"
+          },
+          {
+            "name": "homeX",
+            "type": "u8"
+          },
+          {
+            "name": "homeY",
+            "type": "u8"
+          },
+          {
+            "name": "hp",
+            "type": "u8"
+          },
+          {
+            "name": "alive",
+            "type": "bool"
+          },
+          {
+            "name": "lastAttackSlot",
+            "docs": [
+              "ER slot of its last bite (cooldown)."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "playerSlot",
       "docs": [
         "Public per-player state, readable by everyone. Loot lives in the private `Bag`."
@@ -1765,6 +1841,29 @@ export type ExtractionDungeon = {
               "Unix time the run was created; lobbies that never start can be cancelled after a timeout."
             ],
             "type": "i64"
+          },
+          {
+            "name": "monsters",
+            "docs": [
+              "Vault Guardians, spawned at start."
+            ],
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "monster"
+                  }
+                },
+                2
+              ]
+            }
+          },
+          {
+            "name": "lastTickSlot",
+            "docs": [
+              "ER slot of the last monster tick (rate limit)."
+            ],
+            "type": "u64"
           }
         ]
       }

@@ -1,6 +1,9 @@
 use anchor_lang::prelude::*;
 
-use crate::{map::NUM_CHESTS, DungeonError};
+use crate::{
+    map::{self, NUM_CHESTS},
+    DungeonError,
+};
 
 pub const MAX_PLAYERS: usize = 4;
 pub const START_HP: u8 = 3;
@@ -11,6 +14,23 @@ pub const ATTACK_COOLDOWN_SLOTS: u64 = 36;
 /// Extracting is channeled: stand still on an exit for 180 slots (~2s). Moving, attacking or
 /// getting hit cancels it, and everyone can see you doing it.
 pub const EXTRACT_CHANNEL_SLOTS: u64 = 180;
+
+/// Vault Guardians: two monsters that spawn beside the Vault, chase players who come near,
+/// bite, and walk back home. Anyone seated can drive them with `tick_monsters`.
+pub const MAX_MONSTERS: usize = 2;
+pub const MONSTER_HP: u8 = 3;
+/// Monsters act at most once per tick, and ticks are at least this many ER slots apart (~0.55 s).
+pub const MONSTER_TICK_SLOTS: u64 = 50;
+/// A monster bites at most once per this many ER slots (~1 s).
+pub const MONSTER_ATTACK_SLOTS: u64 = 90;
+/// How far (in steps) from home a monster will wander while chasing.
+pub const MONSTER_LEASH: u8 = 4;
+/// Private loot for killing one.
+pub const MONSTER_BOUNTY: u16 = 2;
+
+pub fn dist(a: (u8, u8), b: (u8, u8)) -> u8 {
+    a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
+}
 
 #[repr(u8)]
 pub enum RunStatus {
@@ -33,16 +53,20 @@ pub enum ChestState {
 pub const TIER_COMMON: u8 = 1;
 pub const TIER_RARE: u8 = 2;
 pub const TIER_LEGENDARY: u8 = 3;
+/// A chest that bites back: no loot, and 1 damage to whoever opened it.
+pub const TIER_MIMIC: u8 = 4;
 
+/// Regular chests: 10% mimic, 50% common, 30% rare, 10% legendary.
 pub fn tier_for_roll(roll: u8) -> u8 {
     match roll {
-        0..=60 => TIER_COMMON,
+        0..=10 => TIER_MIMIC,
+        11..=60 => TIER_COMMON,
         61..=90 => TIER_RARE,
         _ => TIER_LEGENDARY,
     }
 }
 
-/// The Vault never rolls common: 55% rare, 45% legendary.
+/// The Vault never rolls common (or a mimic): 55% rare, 45% legendary.
 pub fn vault_tier_for_roll(roll: u8) -> u8 {
     match roll {
         0..=55 => TIER_RARE,
@@ -94,6 +118,19 @@ pub struct Chest {
     pub opener: u8,
 }
 
+/// A Vault Guardian. Public: everyone sees where it is and how hurt it is.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, InitSpace)]
+pub struct Monster {
+    pub x: u8,
+    pub y: u8,
+    pub home_x: u8,
+    pub home_y: u8,
+    pub hp: u8,
+    pub alive: bool,
+    /// ER slot of its last bite (cooldown).
+    pub last_attack_slot: u64,
+}
+
 /// Where a dead player's sack lies. What's inside is private (the victim's `Bag.dropped`).
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, InitSpace)]
 pub struct DroppedBag {
@@ -125,6 +162,10 @@ pub struct Run {
     pub layout: u8,
     /// Unix time the run was created; lobbies that never start can be cancelled after a timeout.
     pub created_at: i64,
+    /// Vault Guardians, spawned at start.
+    pub monsters: [Monster; MAX_MONSTERS],
+    /// ER slot of the last monster tick (rate limit).
+    pub last_tick_slot: u64,
 }
 
 /// One player's loot. Delegated to the TEE rollup with a permission that only that player's
@@ -165,6 +206,63 @@ impl Run {
         self.seated()
             .iter()
             .position(|p| p.active() && p.x == x && p.y == y)
+    }
+
+    /// Index of the living monster standing on (x, y), if any.
+    pub fn monster_at(&self, x: u8, y: u8) -> Option<usize> {
+        self.monsters.iter().position(|m| m.alive && m.x == x && m.y == y)
+    }
+
+    /// Spawns the two Vault Guardians on the tiles left and right of the Vault.
+    pub fn spawn_monsters(&mut self) {
+        let (vx, vy) = map::get(self.layout).chest(map::VAULT);
+        for (i, x) in [vx - 1, vx + 1].into_iter().enumerate() {
+            self.monsters[i] = Monster { x, y: vy, home_x: x, home_y: vy, hp: MONSTER_HP, alive: true, last_attack_slot: 0 };
+        }
+    }
+
+    /// One step for monster `mi` toward `goal`: the open neighbouring tile that gets closest to it,
+    /// staying within its leash. Doesn't move if no step gets closer.
+    pub fn monster_step(&mut self, mi: usize, goal: (u8, u8)) {
+        let m = self.monsters[mi];
+        let home = (m.home_x, m.home_y);
+        let here = dist((m.x, m.y), goal);
+        let tiles = map::get(self.layout);
+        let mut best: Option<((u8, u8), u8)> = None;
+        for d in 0..4 {
+            let Some(t) = map::step(m.x, m.y, d) else { continue };
+            if tiles.is_wall(t.0, t.1) || tiles.is_chest(t.0, t.1) || self.active_at(t.0, t.1).is_some() || self.monster_at(t.0, t.1).is_some() {
+                continue;
+            }
+            if dist(t, home) > MONSTER_LEASH {
+                continue;
+            }
+            let dg = dist(t, goal);
+            if dg < here && best.map_or(true, |(_, bd)| dg < bd) {
+                best = Some((t, dg));
+            }
+        }
+        if let Some((t, _)) = best {
+            self.monsters[mi].x = t.0;
+            self.monsters[mi].y = t.1;
+        }
+    }
+
+    /// The nearest active player near monster `mi`'s home (within its leash, plus one so it can
+    /// bite someone standing at the edge), with their distance to the monster.
+    pub fn monster_target(&self, mi: usize) -> Option<(usize, u8)> {
+        let m = self.monsters[mi];
+        let mut best: Option<(usize, u8)> = None;
+        for (j, p) in self.seated().iter().enumerate() {
+            if !p.active() || dist((p.x, p.y), (m.home_x, m.home_y)) > MONSTER_LEASH + 1 {
+                continue;
+            }
+            let d = dist((p.x, p.y), (m.x, m.y));
+            if best.map_or(true, |(_, bd)| d < bd) {
+                best = Some((j, d));
+            }
+        }
+        best
     }
 
     /// Exits unlock once a quarter of the run has passed, so nobody can loot one chest and leave.
@@ -269,6 +367,8 @@ mod tests {
             vault_bump: 0,
             layout: 0,
             created_at: 0,
+            monsters: Default::default(),
+            last_tick_slot: 0,
         };
         (run, points)
     }
@@ -309,14 +409,22 @@ mod tests {
     fn vault_never_rolls_common() {
         for roll in 1..=100u8 {
             assert_ne!(vault_tier_for_roll(roll), TIER_COMMON, "roll {roll}");
+            assert_ne!(vault_tier_for_roll(roll), TIER_MIMIC, "roll {roll}");
         }
         assert_eq!(vault_tier_for_roll(55), TIER_RARE);
         assert_eq!(vault_tier_for_roll(56), TIER_LEGENDARY);
     }
 
     #[test]
+    fn mimics_pay_nothing() {
+        assert_eq!(points_for_tier(TIER_MIMIC), 0);
+    }
+
+    #[test]
     fn tiers_cover_the_whole_roll_range() {
-        assert_eq!(tier_for_roll(1), TIER_COMMON);
+        assert_eq!(tier_for_roll(1), TIER_MIMIC);
+        assert_eq!(tier_for_roll(10), TIER_MIMIC);
+        assert_eq!(tier_for_roll(11), TIER_COMMON);
         assert_eq!(tier_for_roll(60), TIER_COMMON);
         assert_eq!(tier_for_roll(61), TIER_RARE);
         assert_eq!(tier_for_roll(90), TIER_RARE);

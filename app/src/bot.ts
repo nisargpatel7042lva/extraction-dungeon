@@ -110,7 +110,8 @@ export class Bot {
       .slice(0, s.playerCount)
       .map((q, i) => ({ q, i }))
       .filter(({ q, i }) => i !== this.seat && q.alive && !q.extracted);
-    const blocked: Tile[] = enemies.map(({ q }) => [q.x, q.y]);
+    const guardians = (s.monsters ?? []).filter((g) => g.alive);
+    const blocked: Tile[] = [...enemies.map(({ q }) => [q.x, q.y] as Tile), ...guardians.map((g) => [g.x, g.y] as Tile)];
     await this.refreshBag();
 
     // 1. Mid-extraction: finish it when the channel is done (Hard will fight off an attacker instead).
@@ -131,6 +132,19 @@ export class Bot {
         await this.chain.attack(this.session, this.run, s.playerCount, dirTo(pos, [adj.q.x, adj.q.y]), false);
       }
       return;
+    }
+
+    // 2b. A Vault Guardian next to us: Medium and Hard fight it (bounty), Easy steps away.
+    const adjG = guardians.find((g) => manhattan(pos, [g.x, g.y]) === 1);
+    if (adjG) {
+      if (this.level !== "easy") {
+        if (Date.now() - this.lastAttack >= ATTACK_COOLDOWN_MS) {
+          this.lastAttack = Date.now();
+          await this.chain.attack(this.session, this.run, s.playerCount, dirTo(pos, [adjG.x, adjG.y]), false);
+        }
+        return;
+      }
+      return this.randomStep(s, pos, blocked);
     }
 
     // Random wandering (mostly Easy).
@@ -158,6 +172,12 @@ export class Bot {
         const goals = sides([prey.q.x, prey.q.y]).map((x) => x.tile);
         if (await this.walk(s, pos, goals, blocked)) return;
       }
+    }
+
+    // 4b. Hard goes after a guardian standing between it and a closed Vault.
+    if (this.level === "hard" && guardians.length && s.chests[MAP.VAULT].state === ChestState.Closed && this.bagPoints < p.greed) {
+      const g = [...guardians].sort((a, b) => manhattan(pos, [a.x, a.y]) - manhattan(pos, [b.x, b.y]))[0];
+      if (manhattan(pos, [g.x, g.y]) <= 8 && (await this.walk(s, pos, sides([g.x, g.y]).map((x) => x.tile), blocked))) return;
     }
 
     // 5. Sacks on the floor: free loot (contents unknown, but never empty of risk).

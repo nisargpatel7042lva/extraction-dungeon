@@ -17,6 +17,14 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body class="mode-landing">
+    <!-- Attract mode: real gameplay looping behind the landing, like a cabinet in demo mode. -->
+    <div id="attract" aria-hidden="true">
+      <video id="bg-video" autoplay muted loop playsinline preload="auto" poster="/media/bg-poster.jpg">
+        <source src="/media/bg-loop.webm" type="video/webm" />
+        <source src="/media/bg-loop.mp4" type="video/mp4" />
+      </video>
+      <span class="attract-tag"><i></i>DEMO PLAY</span>
+    </div>
     <header class="topbar">
       <a class="logo" href="/">EXTRACTION<span>DUNGEON</span></a>
       <nav class="topnav">
@@ -57,6 +65,7 @@
     <div id="stage" hidden>
       <div id="game"></div>
       <div id="hud"></div>
+      <div id="feed" aria-live="polite"></div>
       <div id="touch" aria-hidden="true">
         <div class="dpad">
           <button data-dir="0" class="up">▲</button>

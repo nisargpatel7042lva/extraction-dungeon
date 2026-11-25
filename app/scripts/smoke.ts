@@ -87,7 +87,10 @@ async function here(run: PublicKey, seat: number): Promise<P> {
 }
 async function others(run: PublicKey, seat: number): Promise<P[]> {
   const s = (await chain.fetchRun(run))!.state;
-  return s.players.slice(0, s.playerCount).filter((p, i) => i !== seat && p.alive && !p.extracted).map((p) => [p.x, p.y] as P);
+  return [
+    ...s.players.slice(0, s.playerCount).filter((p, i) => i !== seat && p.alive && !p.extracted).map((p) => [p.x, p.y] as P),
+    ...(s.monsters ?? []).filter((g) => g.alive).map((g) => [g.x, g.y] as P),
+  ];
 }
 async function walkTo(session: Keypair, run: PublicKey, seat: number, goals: P[]) {
   for (const d of route(await here(run, seat), goals, await others(run, seat))) await chain.move(session, run, 2, d);
@@ -131,6 +134,16 @@ async function main() {
   await walkToChest(sessions[0], run, 0, 0);
   await chain.openChest(sessions[0], run, 0, 0);
   check(await waitChest(run, 0), "chest 0 opened by VRF on the TEE");
+  const g = (await chain.fetchRun(run))!.state.monsters[0];
+  const gSides = [0, 1, 2, 3].map((d) => [[g.x - DX[d], g.y - DY[d]] as P, d] as const).filter(([t]) => open(...t));
+  await walkTo(sessions[0], run, 0, gSides.map(([t]) => t));
+  const atG = await here(run, 0);
+  const gDir = gSides.find(([t]) => t[0] === atG[0] && t[1] === atG[1])![1];
+  for (let i = 0; i < 3; i++) {
+    await chain.attack(sessions[0], run, 2, gDir);
+    await sleep(500);
+  }
+  check(!(await chain.fetchRun(run))!.state.monsters[0].alive, "a Vault Guardian slain in three hits");
   const vaultDir = await walkToChest(sessions[0], run, 0, MAP.VAULT);
   void vaultDir;
   await chain.openChest(sessions[0], run, 0, MAP.VAULT);
@@ -165,10 +178,11 @@ async function main() {
     blocked = /6022|0x1786/.test((e as Error).message);
   }
   check(blocked, "attack cooldown enforced");
-  await sleep(500);
-  await chain.attack(sessions[1], run, 2, dir);
-  await sleep(500);
-  await chain.attack(sessions[1], run, 2, dir);
+  // Hit until dead (a mimic may already have bitten seat 0).
+  for (let i = 0; i < 3 && (await chain.fetchRun(run))!.state.players[0].alive; i++) {
+    await sleep(500);
+    await chain.attack(sessions[1], run, 2, dir);
+  }
   let s = (await chain.fetchRun(run))!.state;
   check(!s.players[0].alive && s.dropped[0].present && s.dropped[0].points === 0, "kill drops a sack with hidden contents");
   await chain.move(sessions[1], run, 2, dir); // onto the sack
