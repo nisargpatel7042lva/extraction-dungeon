@@ -17,8 +17,8 @@ MagicBlock Private Ephemeral Rollup: no fees, no popups, and your loot stays hid
 Play solo vs CPUs or with friends.
 
 **Links**
-- Live (devnet): https://extraction-dungeon-three.vercel.app
-- Live on-chain stats: https://extraction-dungeon-three.vercel.app/stats
+- Live (devnet): https://extractiondungeon.vercel.app
+- Live on-chain stats: https://extractiondungeon.vercel.app/stats
 - Repo: https://github.com/nisargpatel7042lva/extraction-dungeon
 - Video: <YouTube / Loom URL, add after recording>
 - Program (devnet): `2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`

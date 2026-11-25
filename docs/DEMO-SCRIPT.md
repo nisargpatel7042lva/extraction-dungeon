@@ -8,7 +8,7 @@ private until the run ends, and the payout is settled by the program.
 
 - **Two browser windows side by side** (e.g. Chrome + a second Chrome profile), each with Phantom in **testnet mode** and
   ~0.3 devnet SOL (faucet.solana.com). Window A = you (P1, host), window B = a friend or your second profile (P2).
-- Open https://extraction-dungeon-three.vercel.app in both. 1080p screen recording, browser zoom 100%, other tabs closed.
+- Open https://extractiondungeon.vercel.app in both. 1080p screen recording, browser zoom 100%, other tabs closed.
 - Sound **on** (the chiptune track and effects carry the energy). Record system audio.
 - A third tab on Solana Explorer (devnet) for the payout transaction.
 - Stake **0.05 SOL**, timer **2:00**, plus one **Hard CPU** so the fight is busy.

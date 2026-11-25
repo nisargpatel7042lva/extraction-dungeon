@@ -10,8 +10,8 @@ and nobody can see what you're carrying.
 
 <img src="app/public/sprites/hero0.png" width="56" /> <img src="app/public/sprites/hero1.png" width="56" /> <img src="app/public/sprites/chest_closed.png" width="56" /> <img src="app/public/sprites/sack.png" width="48" /> <img src="app/public/sprites/exit.png" width="52" /> <img src="app/public/sprites/hero2.png" width="56" /> <img src="app/public/sprites/hero3.png" width="56" />
 
-[![Play](https://img.shields.io/badge/%E2%96%B6%20PLAY-devnet-ff3dc7?style=for-the-badge)](https://extraction-dungeon-three.vercel.app)
-[![Live stats](https://img.shields.io/badge/LIVE%20STATS-on--chain-3df2ff?style=for-the-badge)](https://extraction-dungeon-three.vercel.app/stats)
+[![Play](https://img.shields.io/badge/%E2%96%B6%20PLAY-devnet-ff3dc7?style=for-the-badge)](https://extractiondungeon.vercel.app)
+[![Live stats](https://img.shields.io/badge/LIVE%20STATS-on--chain-3df2ff?style=for-the-badge)](https://extractiondungeon.vercel.app/stats)
 [![Program](https://img.shields.io/badge/PROGRAM-2c1W2M…BBqw-ffd23d?style=for-the-badge)](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet)
 
 ![MagicBlock](https://img.shields.io/badge/MagicBlock-Ephemeral%20Rollups%20·%20Private%20ER%20(TEE)%20·%20VRF-9b7bff?style=flat-square)
@@ -40,8 +40,8 @@ Extraction Dungeon is our entry for **MagicBlock Solana Blitz v10 (Entertainment
 
 | | |
 |---|---|
-| ▶ **Play** | https://extraction-dungeon-three.vercel.app (devnet: Phantom in testnet mode + [free devnet SOL](https://faucet.solana.com)) |
-| 📊 **Live stats** | https://extraction-dungeon-three.vercel.app/stats: every game, read straight from the chain |
+| ▶ **Play** | https://extractiondungeon.vercel.app (devnet: Phantom in testnet mode + [free devnet SOL](https://faucet.solana.com)) |
+| 📊 **Live stats** | https://extractiondungeon.vercel.app/stats: every game, read straight from the chain |
 | 📼 **Demo video** | 2:54, with gameplay and voice-over (link added after upload) |
 | 🔗 **Program** | [`2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet) (devnet) |
 | 🔒 **Rollup** | `devnet-tee.magicblock.app` (TEE validator `MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo`) |
@@ -228,7 +228,7 @@ processed by `app/scripts/sprites.ts`.
 
 <div align="center"><img src="docs/media/stats.jpg" alt="Live stats" width="100%" /></div>
 
-- **[/stats](https://extraction-dungeon-three.vercel.app/stats)** reads every game straight from the program's accounts on
+- **[/stats](https://extractiondungeon.vercel.app/stats)** reads every game straight from the program's accounts on
   devnet: games created, played and finished, seats filled, unique hosts and wallets, SOL staked, paid out and refunded,
   escapes, kills, VRF chests opened, maps played, and recent games with Explorer links, plus live system checks
   (Solana RPC, program deployed, MagicBlock TEE rollup). No server: anyone can verify the numbers.
