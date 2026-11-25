@@ -402,7 +402,7 @@ function showConnect() {
       ${
         hasPhantom() || !mobileNoWallet
           ? `<button id="ph" class="big ${NETS[net].airdrop || params.has("dev") ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>`
-          : `<a class="btn big" href="${links.phantom}">👻 Open in Phantom</a><a class="btn big ghost" href="${links.solflare}">☀ Open in Solflare</a>`
+          : `<a class="btn big" href="${links.phantom}">👻 Open in Phantom</a>`
       }
       <button class="ghost" data-guide>How to play</button>
     </div>
@@ -410,7 +410,7 @@ function showConnect() {
       hasPhantom()
         ? ""
         : mobileNoWallet
-          ? `<p class="muted">Phone browsers can't reach wallet apps directly. These buttons reopen the game inside your wallet's own browser, where Connect works. No wallet yet? <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`
+          ? `<p class="muted">Phone browsers can't reach wallet apps directly. This button reopens the game inside Phantom's own browser, where Connect works. No wallet yet? <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`
           : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a> for your browser.</p>`
     }
     ${net === "devnet" ? `<p class="muted">Runs on Solana <b>devnet</b>: switch Phantom to devnet (Settings → Developer settings → Testnet mode) and grab free devnet SOL at <a href="https://faucet.solana.com" target="_blank" rel="noopener">faucet.solana.com</a>. A run costs about 0.02 SOL plus your stake.</p>` : ""}`;

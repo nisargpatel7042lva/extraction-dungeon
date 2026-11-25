@@ -25,14 +25,13 @@ export function isMobileBrowser(): boolean {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 }
 
-/** Universal links that reopen this exact page (invite link included) inside the wallet app's
+/** Universal link that reopens this exact page (invite link included) inside the Phantom app's
  *  browser, where the wallet is injected and Connect works. */
 export function walletBrowseLinks(url = location.href) {
   const u = encodeURIComponent(url);
   const ref = encodeURIComponent(location.origin);
   return {
     phantom: `https://phantom.app/ul/browse/${u}?ref=${ref}`,
-    solflare: `https://solflare.com/ul/v1/browse/${u}?ref=${ref}`,
   };
 }
 
