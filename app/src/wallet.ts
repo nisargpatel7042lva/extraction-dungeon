@@ -19,9 +19,33 @@ export function hasPhantom(): boolean {
   return phantom() !== null;
 }
 
+/** Phone and tablet browsers (Chrome, Safari...) have no wallet extension: a wallet only exists
+ *  inside the wallet app's own browser. */
+export function isMobileBrowser(): boolean {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+}
+
+/** Universal links that reopen this exact page (invite link included) inside the wallet app's
+ *  browser, where the wallet is injected and Connect works. */
+export function walletBrowseLinks(url = location.href) {
+  const u = encodeURIComponent(url);
+  const ref = encodeURIComponent(location.origin);
+  return {
+    phantom: `https://phantom.app/ul/browse/${u}?ref=${ref}`,
+    solflare: `https://solflare.com/ul/v1/browse/${u}?ref=${ref}`,
+  };
+}
+
+/** Wallet apps' in-app browsers sometimes inject the provider a moment after the page loads. */
+export async function waitForPhantom(ms = 2500): Promise<boolean> {
+  const t0 = Date.now();
+  while (!hasPhantom() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 150));
+  return hasPhantom();
+}
+
 export async function connectPhantom(): Promise<WalletSigner> {
-  const p = phantom();
-  if (!p) throw new Error("Phantom not found");
+  if (!(await waitForPhantom())) throw new Error("Phantom not found");
+  const p = phantom()!;
   const { publicKey } = await p.connect();
   return { publicKey, signTransaction: (tx) => p.signTransaction(tx) };
 }

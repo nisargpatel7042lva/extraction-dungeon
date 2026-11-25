@@ -613,3 +613,29 @@ body.device-tablet .hud-side .seat { font-size: 17px; }
   body.device-tablet.mode-live #game { bottom: calc(220px + var(--safe-b)); }
   body.device-tablet.mode-live #touch { height: calc(220px + var(--safe-b)); }
 }
+
+/* ---------- links that look like arcade buttons (Open in Phantom / Solflare) ---------- */
+a.btn {
+  display: inline-block;
+  font: 11px/1 var(--px);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-decoration: none;
+  background: var(--gold);
+  color: #1a1206;
+  border: 3px solid #000;
+  padding: 13px 16px;
+  box-shadow: inset -3px -3px 0 rgba(0, 0, 0, 0.25), inset 3px 3px 0 rgba(255, 255, 255, 0.35), 4px 4px 0 #000;
+}
+a.btn.big { font-size: 14px; padding: 18px 22px; }
+a.btn.ghost { background: #1b1630; color: var(--text); }
+a.btn:active { transform: translate(4px, 4px); box-shadow: none; }
+
+/* ---------- "turn it sideways" tip ---------- */
+.rotate-tip { display: flex; justify-content: center; margin: 4px 0 10px; }
+.rotate-ico { font-size: 56px; line-height: 1; display: inline-block; animation: rotate-phone 2.2s ease-in-out infinite; }
+@keyframes rotate-phone {
+  0%, 25% { transform: rotate(0deg); }
+  55%, 85% { transform: rotate(-90deg); }
+  100% { transform: rotate(0deg); }
+}

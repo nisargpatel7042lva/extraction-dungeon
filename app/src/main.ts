@@ -20,7 +20,7 @@ import {
   useLayout,
 } from "./chain";
 import { DungeonScene, SEAT_COLORS, startGame } from "./game";
-import { connectPhantom, devWallet, hasPhantom, sessionKey } from "./wallet";
+import { connectPhantom, devWallet, hasPhantom, isMobileBrowser, sessionKey, waitForPhantom, walletBrowseLinks } from "./wallet";
 import { Bot, BotLevel, LEVELS } from "./bot";
 import bs58 from "bs58";
 import { initGuide } from "./guide";
@@ -104,9 +104,22 @@ function askDevice(): Promise<void> {
       </div>`;
     dlg.querySelectorAll<HTMLButtonElement>("[data-device]").forEach((b) =>
       b.addEventListener("click", () => {
-        applyDevice(b.dataset.device as Device);
-        dlg!.close();
-        resolve();
+        const d = b.dataset.device as Device;
+        applyDevice(d);
+        if (d === "pc") {
+          dlg!.close();
+          return resolve();
+        }
+        // Phones and tablets: the whole dungeon fits sideways.
+        dlg!.innerHTML = `
+          <div class="rotate-tip"><span class="rotate-ico">📱</span></div>
+          <h2>Turn it sideways</h2>
+          <p>For a better gaming experience, turn your ${d === "phone" ? "phone" : "tablet"} to <b class="neon-cyan">landscape mode</b>: the whole dungeon fits on screen, with the D-pad and EXIT button on the sides.</p>
+          <div class="row" style="justify-content:center"><button id="rotate-ok" class="big pink">Got it</button></div>`;
+        dlg!.querySelector("#rotate-ok")!.addEventListener("click", () => {
+          dlg!.close();
+          resolve();
+        });
       }),
     );
     dlg.addEventListener("cancel", () => resolve(), { once: true }); // Esc keeps the current choice
@@ -378,19 +391,36 @@ function renderWallet() {
 
 function showConnect() {
   setMode("landing");
+  const mobileNoWallet = !hasPhantom() && isMobileBrowser();
+  const links = walletBrowseLinks();
   screen.className = "card";
   screen.innerHTML = `
     <h2>▶ Press start</h2>
     <p class="muted">Connect a wallet to open a run, or join one from an invite link.</p>
     <div class="row">
       ${NETS[net].airdrop || params.has("dev") ? `<button id="dev" class="big">Dev wallet</button>` : ""}
-      <button id="ph" class="big ${NETS[net].airdrop || params.has("dev") ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>
+      ${
+        hasPhantom() || !mobileNoWallet
+          ? `<button id="ph" class="big ${NETS[net].airdrop || params.has("dev") ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>`
+          : `<a class="btn big" href="${links.phantom}">👻 Open in Phantom</a><a class="btn big ghost" href="${links.solflare}">☀ Open in Solflare</a>`
+      }
       <button class="ghost" data-guide>How to play</button>
     </div>
-    ${hasPhantom() ? "" : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>${isTouch ? " and open this page in Phantom's built-in browser" : ""}.</p>`}
+    ${
+      hasPhantom()
+        ? ""
+        : mobileNoWallet
+          ? `<p class="muted">Phone browsers can't reach wallet apps directly. These buttons reopen the game inside your wallet's own browser, where Connect works. No wallet yet? <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`
+          : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a> for your browser.</p>`
+    }
     ${net === "devnet" ? `<p class="muted">Runs on Solana <b>devnet</b>: switch Phantom to devnet (Settings → Developer settings → Testnet mode) and grab free devnet SOL at <a href="https://faucet.solana.com" target="_blank" rel="noopener">faucet.solana.com</a>. A run costs about 0.02 SOL plus your stake.</p>` : ""}`;
   $("dev")?.addEventListener("click", () => guarded("Dev wallet", async () => connected(await devWallet(chain))));
-  $("ph").addEventListener("click", () => guarded("Phantom", async () => connected(await connectPhantom())));
+  $("ph")?.addEventListener("click", () => guarded("Phantom", async () => connected(await connectPhantom())));
+  // Inside a wallet app's browser the provider can appear just after load: re-render when it does.
+  if (!hasPhantom())
+    void waitForPhantom(4000).then((ok) => {
+      if (ok && !wallet && screen.querySelector("#dev, #ph, a.btn")) showConnect();
+    });
 }
 
 async function connected(w: WalletSigner) {
@@ -720,7 +750,9 @@ function showLobby() {
 }
 
 function showLive() {
+  const wasLive = document.body.classList.contains("mode-live");
   setMode("live");
+  if (!wasLive && isTouch && matchMedia("(orientation: portrait)").matches) toast("📱↻ Turn your phone sideways to see the whole dungeon");
   screen.innerHTML = "";
   if (!scene) scene = startGame(gameEl);
   startClockSync();
