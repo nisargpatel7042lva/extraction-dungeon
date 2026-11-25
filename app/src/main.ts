@@ -359,6 +359,12 @@ function enterFullscreen() {
     (e) => {
       if (fsOptOut || (e as KeyboardEvent).key === "Escape") return;
       if ((e.target as HTMLElement)?.closest?.("[data-act=fs]")) return; // the button handles itself
+      // requestFullscreen uses up the tap's user activation, and phones need that activation to
+      // open another app (the Open-in-Phantom universal link) or show a wallet approval sheet.
+      // So never on links or wallet buttons, and inside a wallet's own browser (where every
+      // create/join/claim pops an approval) only once a run is live and nothing needs signing.
+      if ((e.target as HTMLElement)?.closest?.("a, #ph, [data-nofs]")) return;
+      if (hasPhantom() && isMobileBrowser() && !document.body.classList.contains("mode-live")) return;
       enterFullscreen();
     },
     { passive: true },
@@ -412,7 +418,7 @@ function showConnect() {
       ${
         hasPhantom() || !mobileNoWallet
           ? `<button id="ph" class="big ${NETS[net].airdrop || params.has("dev") ? "ghost" : ""}" ${hasPhantom() ? "" : "disabled"}>Connect Phantom</button>`
-          : `<a class="btn big" href="${links.phantom}">👻 Open in Phantom</a>`
+          : `<a class="btn big" href="${links.phantom}">👻 Open in Phantom</a><button class="ghost" id="copy-link" data-nofs>Copy link</button>`
       }
       <button class="ghost" data-guide>How to play</button>
     </div>
@@ -420,13 +426,20 @@ function showConnect() {
       hasPhantom()
         ? ""
         : mobileNoWallet
-          ? `<p class="muted">Phone browsers can't reach wallet apps directly. This button reopens the game inside Phantom's own browser, where Connect works. No wallet yet? <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`
+          ? `<p class="muted">Phone browsers can't reach wallet apps directly. This button reopens the game inside Phantom's own browser, where Connect works. If nothing happens, tap <b>Copy link</b>, open Phantom, and paste it into the search bar on its Explore tab. No wallet yet? <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a>.</p>`
           : `<p class="muted">Phantom not detected. <a href="https://phantom.com/download" target="_blank" rel="noopener">Get Phantom</a> for your browser.</p>`
     }
     ${net === "devnet" ? `<p class="muted">Runs on Solana <b>devnet</b>: switch Phantom to devnet (Settings → Developer settings → Testnet mode) and grab free devnet SOL at <a href="https://faucet.solana.com" target="_blank" rel="noopener">faucet.solana.com</a>. A run costs about 0.02 SOL plus your stake.</p>` : ""}`;
   $("dev")?.addEventListener("click", () => guarded("Dev wallet", async () => connected(await devWallet(chain))));
   $("ph")?.addEventListener("click", () => guarded("Phantom", async () => connected(await connectPhantom())));
   screen.querySelector("a.btn")?.addEventListener("click", () => track("open_in_phantom", { device }));
+  $("copy-link")?.addEventListener("click", () => {
+    const url = location.href;
+    const done = () => toast("Link copied: paste it into Phantom's browser");
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, () => prompt("Copy this link:", url));
+    else prompt("Copy this link:", url);
+    track("copy_link", { device });
+  });
   // Inside a wallet app's browser the provider can appear just after load: re-render when it does.
   if (!hasPhantom())
     void waitForPhantom(4000).then((ok) => {
