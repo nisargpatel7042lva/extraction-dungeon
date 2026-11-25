@@ -74,6 +74,14 @@ export const SLOT_HASHES = new PublicKey("SysvarS1otHashes1111111111111111111111
 
 export const Dir = { Up: 0, Right: 1, Down: 2, Left: 3 } as const;
 export const Status = { Lobby: 0, Live: 1, Ended: 2, Cancelled: 3 } as const;
+/** The run account was made by an older version of the program and can't be read any more. */
+export class OutdatedRunError extends Error {
+  constructor() {
+    super("This game was created with an older version of Extraction Dungeon.");
+    this.name = "OutdatedRunError";
+  }
+}
+
 /** Mirrors LOBBY_TIMEOUT_SECS: after this, anyone can cancel a lobby that never started. */
 export const LOBBY_TIMEOUT_SECS = 600;
 export const ChestState = { Closed: 0, Opening: 1, Opened: 2 } as const;
@@ -355,7 +363,14 @@ export class Chain {
   }
 
   decode(data: Buffer): RunState {
-    return this.program.coder.accounts.decode("run", data) as RunState;
+    try {
+      return this.program.coder.accounts.decode("run", data) as RunState;
+    } catch (e) {
+      // A run created before a program upgrade that grew the Run account is shorter than the
+      // current layout, and decoding it overruns the buffer.
+      if (e instanceof RangeError) throw new OutdatedRunError();
+      throw e;
+    }
   }
 
   decodeBag(data: Buffer): BagState {

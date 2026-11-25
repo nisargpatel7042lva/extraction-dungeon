@@ -13,6 +13,7 @@ import {
   Status,
   TIER_NAMES,
   LOBBY_TIMEOUT_SECS,
+  OutdatedRunError,
   WalletSigner,
   chainClock,
   exitsOpenAt,
@@ -377,7 +378,21 @@ function showCreate() {
 async function openRun(run: PublicKey) {
   session = sessionKey(run);
   loadBots(run);
-  const got = await chain.fetchRun(run);
+  let got: Awaited<ReturnType<Chain["fetchRun"]>>;
+  try {
+    got = await chain.fetchRun(run);
+  } catch (e) {
+    if (!(e instanceof OutdatedRunError)) throw e;
+    // An invite or bookmarked link to a game from before a program upgrade.
+    setMode("landing");
+    screen.className = "card red";
+    screen.innerHTML = `
+      <h2>Old game link</h2>
+      <p class="muted">This game was created with an older version of Extraction Dungeon and can't be opened any more.</p>
+      <div class="row"><button id="again" class="big pink">▶ New game</button></div>`;
+    $("again").addEventListener("click", newGame);
+    return;
+  }
   if (!got) {
     setMode("landing");
     screen.innerHTML = `<h2>Run not found</h2><p class="muted mono">${run.toBase58()}</p><p class="muted">If the host just started it, give it a few seconds and reload.</p>`;
