@@ -1269,6 +1269,44 @@ export type ExtractionDungeon = {
       "args": []
     },
     {
+      "name": "startGuardians",
+      "docs": [
+        "ER. Hands the Vault Guardians to the rollup's own scheduler: a MagicBlock crank that calls",
+        "`tick_monsters` every GUARDIAN_CRANK_MILLIS until the run's timer ends, signed by the crank",
+        "signer PDA of the scheduling session key, so the monsters keep moving with nobody's browser",
+        "driving them. Any seated player can call it once the run is live (the host's client does);",
+        "the first caller becomes the task authority, and only that key may reschedule (same task",
+        "ID, so it replaces rather than duplicates).",
+        "remaining_accounts: every seat's Bag, in seat order (a bite can kill)."
+      ],
+      "discriminator": [
+        243,
+        32,
+        225,
+        102,
+        208,
+        197,
+        86,
+        9
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true
+        },
+        {
+          "name": "magicProgram",
+          "address": "Magic11111111111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "startRun",
       "docs": [
         "Base. Starts the clock. Sent in the same tx as `delegate_run`."
@@ -1305,7 +1343,10 @@ export type ExtractionDungeon = {
         "bites (1 damage, interrupts extraction) when adjacent, or walks back home. Any seated session",
         "key may call it (the host's client does, every ~0.6 s); calls closer together than",
         "MONSTER_TICK_SLOTS are no-ops, so extra callers can't speed the monsters up.",
-        "remaining_accounts: every seat's Bag, in seat order (a bite can kill)."
+        "remaining_accounts: every seat's Bag, in seat order (a bite can kill).",
+        "The signer is a seated session key, or the guardian crank's signer PDA (the rollup's",
+        "scheduler, see `start_guardians`). After the run is over it's a no-op, so the crank's last",
+        "few iterations don't fail."
       ],
       "discriminator": [
         6,
@@ -1531,6 +1572,11 @@ export type ExtractionDungeon = {
       "code": 6028,
       "name": "cannotCancelYet",
       "msg": "Only the host can cancel this lobby yet"
+    },
+    {
+      "code": 6029,
+      "name": "crankTaken",
+      "msg": "Another player already scheduled the guardians"
     }
   ],
   "types": [
@@ -1864,6 +1910,18 @@ export type ExtractionDungeon = {
               "ER slot of the last monster tick (rate limit)."
             ],
             "type": "u64"
+          },
+          {
+            "name": "crankAuthority",
+            "docs": [
+              "The session key that scheduled the guardian crank (its task authority), and the crank",
+              "signer PDA the rollup's scheduler signs `tick_monsters` with. Default until scheduled."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "crankSigner",
+            "type": "pubkey"
           }
         ]
       }

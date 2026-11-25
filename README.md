@@ -17,7 +17,7 @@ and nobody can see what you're carrying.
 ![MagicBlock](https://img.shields.io/badge/MagicBlock-Ephemeral%20Rollups%20·%20Private%20ER%20(TEE)%20·%20VRF-9b7bff?style=flat-square)
 ![Solana](https://img.shields.io/badge/Solana-devnet-14F195?style=flat-square)
 ![Anchor](https://img.shields.io/badge/Anchor-1.1.2-f5c04a?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-25%20e2e%20·%209%20unit%20·%2014%20devnet-4ef0a0?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-28%20e2e%20·%209%20unit%20·%2015%20devnet-4ef0a0?style=flat-square)
 ![Blitz](https://img.shields.io/badge/Solana%20Blitz-v10%20·%20Entertainment%20Finance-ff3dc7?style=flat-square)
 
 </div>
@@ -61,7 +61,7 @@ link, or with **CPU** players. Press **Start game**.
 | 🧰 **Chests** | Walk into one to open it. VRF rolls **common 1 pt** (50%), **rare 3 pts** (30%) or **legendary 8 pts** (10%), and only you see the result. |
 | 🦷 **Mimics** | 10% of chests are **mimics**: no loot, and they **bite for 1 heart** and break your extraction. A mimic can kill you, and then your bag drops for everyone. |
 | 👑 **The Vault** | The glowing chest in the middle never rolls common or a mimic (rare or legendary only). That's where the fights happen. |
-| 👹 **Vault Guardians** | Two horned demons stand beside the Vault. They **chase anyone within 4 tiles of their post, bite** (1 heart, own cooldown) and walk home when you run. **3 hits kill one for a +2 bounty** into your private bag. They block tiles, so the Vault has to be earned. |
+| 👹 **Vault Guardians** | Two horned demons stand beside the Vault. They **chase anyone within 3 tiles of their post, bite** (1 heart, at most every ~2 s) and walk home when you run. **3 hits kill one for a +2 bounty** into your private bag. They block tiles, so the Vault has to be earned. A **MagicBlock crank** on the rollup moves them: nobody's browser drives the monsters. |
 | ⚔️ **Combat** | Walk into a player to hit them. **3 hits kill**, with a **0.4 s cooldown**, so spam-clicking doesn't win. |
 | 💀 **Sacks** | When you die, your whole bag drops as a sack marked **?**. Whoever walks over it takes everything, without knowing how much it is. |
 | 🔒 **Exits** | Exits unlock a **quarter of the way in**. Stand on one and **channel for 2 s** to extract; moving or getting hit cancels it. |
@@ -138,6 +138,7 @@ The program enforces these, not a server:
 | **Ephemeral Rollups** | `move_player`, `attack`, `start_extract`, `extract` | All gameplay runs on the rollup. Moves are fire-and-forget with client-side prediction, so your knight moves instantly. |
 | **Commit + undelegate** | `end_run` (`#[commit]`, `MagicIntentBundleBuilder::commit_and_undelegate`) | Commits the run and every bag back to Solana in one intent. |
 | **VRF** | `open_chest` (`#[vrf]`, `create_request_randomness_ix_const`) → `callback_open_chest` (`#[vrf_callback]`) | Randomness from the ephemeral queue, inside the PER. The callback (gated by the program's scoped VRF identity) writes the tier into the opener's **private** bag, about 0.7 s after opening. |
+| **Cranks** | `start_guardians` → `tick_monsters` | The host's session key schedules a task on the rollup's own scheduler (`ScheduleTask`). Every 0.7 s it calls `tick_monsters`, signed by the crank signer PDA the run records, so the Vault Guardians chase and bite with no client ticking them. Ticks are rate-limited on-chain and no-op after the timer, so extra or late calls are harmless. |
 | **Session keys** | `join_run(session_signer)` | A per-run browser keypair registered at join; every rollup action is checked against it, and its leftover SOL is swept back after the run. |
 
 `ephemeral-rollups-sdk 0.18` (`anchor`, `vrf`, `access-control`) · `anchor-lang 1.1.2` · `@magicblock-labs/ephemeral-rollups-sdk 0.18.0`
@@ -246,8 +247,8 @@ processed by `app/scripts/sprites.ts`.
 | Suite | Count | Covers |
 |---|---|---|
 | Unit (`cargo test -p extraction_dungeon --lib`) | **9** | Mimic odds, payout split, equal split for empty bags, refunds when nobody escapes, rounding dust to the best bag, tier tables, Vault tiers, every map fully connected |
-| End-to-end in MagicSVM (`tests-magicsvm`) | **25** | Mimics bite, can kill and drop your bag; the Vault is never a mimic · **Vault Guardians** spawn beside the Vault and block it, chase and bite on a rate-limited tick, can kill (bag drops), and pay a private bounty when slain · Stakes, seats and bags delegated at join · **opponents can't read each other's bags** · movement, walls, chests, session keys · chest tiers land only in the private bag · attack cooldown · death → sack → looted → extract → settle · bags can't be swapped · timer → refunds · split by loot · **host can't end a run early to grab the pot** · host and timeout lobby cancels · live runs can't be cancelled · loot + extract on every map · locked exits, channeling, interrupts |
-| Live devnet smoke test (`app/scripts/smoke.ts`) | **14** | On the real TEE rollup: owner-only bag reads, VRF chests, a Vault Guardian slain in three hits, Vault tiers, locked exits, cooldown, hidden sack contents, channeling, and the exact payout |
+| End-to-end in MagicSVM (`tests-magicsvm`) | **28** | **The rollup's crank drives the guardians with no client ticking** · only one player owns the crank · ticks after the timer are no-ops · Mimics bite, can kill and drop your bag; the Vault is never a mimic · **Vault Guardians** spawn beside the Vault and block it, chase and bite on a rate-limited tick, can kill (bag drops), and pay a private bounty when slain · Stakes, seats and bags delegated at join · **opponents can't read each other's bags** · movement, walls, chests, session keys · chest tiers land only in the private bag · attack cooldown · death → sack → looted → extract → settle · bags can't be swapped · timer → refunds · split by loot · **host can't end a run early to grab the pot** · host and timeout lobby cancels · live runs can't be cancelled · loot + extract on every map · locked exits, channeling, interrupts |
+| Live devnet smoke test (`app/scripts/smoke.ts`) | **15** | On the real TEE rollup: owner-only bag reads, VRF chests, a Vault Guardian slain in three hits, **the rollup's crank ticking the guardians on its own**, Vault tiers, locked exits, cooldown, hidden sack contents, channeling, and the exact payout |
 
 ---
 
@@ -282,7 +283,7 @@ depth, and how compellingly it showcases what's possible on Solana**. Submission
 | ✅ **Eligibility:** uses Ephemeral Rollups or VRF | Ephemeral Rollups **and** Private Ephemeral Rollups (TEE) **and** VRF, all carrying the gameplay |
 | ✅ **Theme:** Entertainment Finance | Real SOL stakes, a pot split by loot, refunds, verifiable payouts, in an arcade game |
 | ✅ **Creativity** | Hidden-information PvP: private bags in a TEE make bluffing and "is he worth robbing?" possible on-chain |
-| ✅ **Technical depth** | Delegation, ER-local permissions, VRF callbacks, commit + undelegate, session keys; 25 + 9 + 14 tests; real edge cases fixed and documented |
+| ✅ **Technical depth** | Delegation, ER-local permissions, VRF callbacks, a crank on the rollup's scheduler, commit + undelegate, session keys; 28 + 9 + 15 tests; real edge cases fixed and documented |
 | ✅ **Showcase** | Live on devnet, playable on PC and phone, solo with CPUs, public on-chain stats, Explorer-verified payouts |
 | ✅ **Working MVP** | Deployed program, live site, full loop verified on devnet |
 | ✅ **Public repo** | This repository |
@@ -302,7 +303,7 @@ Prereqs: Rust, Solana CLI 3.x, Anchor CLI 1.1.2, Node 22+.
 ```bash
 anchor build
 cargo +stable test -p extraction_dungeon --lib          # 9 unit tests
-cd tests-magicsvm && cargo +stable test                 # 25 end-to-end scenarios (MagicSVM)
+cd tests-magicsvm && cargo +stable test                 # 28 end-to-end scenarios (MagicSVM)
 
 cd app && npm install
 NET=devnet npx tsx scripts/smoke.ts                     # live run on devnet-tee (needs devnet SOL in ~/.config/solana/id.json)
@@ -337,7 +338,7 @@ docs/        submission text, demo script, build reports, README media
 
 ## 🛣️ NEXT
 
-- A crank that ends each run automatically at the buzzer, and a post-commit Magic Action that settles in the same step.
+- Extend the crank so it also ends each run automatically at the buzzer, and a post-commit Magic Action that settles in the same step.
 - A public list of open lobbies to join.
 - Collectible mints for legendary drops.
 - Reclaiming rent from finished runs.

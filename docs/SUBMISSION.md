@@ -62,6 +62,9 @@ information (you never know whether that player is worth killing), and a payout 
 - **VRF:** `open_chest` requests randomness on the ephemeral queue from inside the PER (fee-free there).
   `callback_open_chest`, gated by the program's scoped VRF identity, writes the tier into the opener's private bag
   (about 0.7 s on devnet-tee).
+- **Cranks:** `start_guardians` schedules a task on the rollup's own scheduler (`ScheduleTask`) that calls
+  `tick_monsters` every 0.7 s, signed by the crank signer PDA recorded on the run. The Vault Guardians chase and bite
+  with no client ticking them; ticks are rate-limited on-chain and no-op after the timer.
 - **Session keys:** a per-run browser keypair registered at join, checked on every rollup action and swept back after.
 
 **Proof it's live**
@@ -73,12 +76,12 @@ MagicBlock TEE rollup). No server and no analytics service: anyone can verify th
 **What's tested**
 - 9 unit tests: mimic odds, payout math (proportional split, equal split, refunds when nobody escapes, dust to the best bag), tier
   tables, and every map being fully connected.
-- 25 end-to-end scenarios in MagicSVM (base layer + ER + VRF + permission program), including "opponents can't read each
+- 28 end-to-end scenarios in MagicSVM (base layer + ER + VRF + permission program), including "opponents can't read each
   other's bags", "the host can't end a run early to grab the pot", lobby cancel refunds, the attack cooldown, locked
   exits, channeled extraction, a loot-and-extract run on every map, mimics that bite and can kill, and Vault
   Guardians that block the Vault, chase, bite on a rate-limited tick, and pay a private bounty when slain.
-- A devnet smoke test on the TEE with 14 checks: owner-only bag reads (an opponent is refused), VRF on the TEE, a Vault
-  Guardian slain in three hits, the Vault
+- A devnet smoke test on the TEE with 15 checks: owner-only bag reads (an opponent is refused), VRF on the TEE, a Vault
+  Guardian slain in three hits, the rollup's crank ticking the guardians on its own, the Vault
   tier table, locked exits, the cooldown, hidden sack contents, channeling, and the exact payout.
 
 **Found along the way (feedback for the MagicBlock team)**
@@ -95,7 +98,7 @@ MagicBlock TEE rollup). No server and no analytics service: anyone can verify th
   fill whole buffer"), and the ephemeral VRF queue has no oracle. Devnet is fine.
 
 **What's next**
-- A crank that ends each run automatically at the buzzer, and a post-commit Magic Action that settles payouts in the same
+- Extend the crank so it also ends each run automatically at the buzzer, and a post-commit Magic Action that settles payouts in the same
   step (no "End run" or "Claim" clicks).
 - A public list of open lobbies, collectible mints for legendary drops, and reclaiming rent from finished runs.
 

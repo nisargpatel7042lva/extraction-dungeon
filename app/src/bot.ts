@@ -134,10 +134,12 @@ export class Bot {
       return;
     }
 
-    // 2b. A Vault Guardian next to us: Medium and Hard fight it (bounty), Easy steps away.
+    // 2b. A Vault Guardian next to us: fight it for the bounty only when healthy enough (Medium at
+    // full health, Hard with 2+ hearts); otherwise back off. Easy always backs off.
     const adjG = guardians.find((g) => manhattan(pos, [g.x, g.y]) === 1);
     if (adjG) {
-      if (this.level !== "easy") {
+      const brave = this.level === "hard" ? me.hp >= 2 : this.level === "medium" ? me.hp >= 3 : false;
+      if (brave) {
         if (Date.now() - this.lastAttack >= ATTACK_COOLDOWN_MS) {
           this.lastAttack = Date.now();
           await this.chain.attack(this.session, this.run, s.playerCount, dirTo(pos, [adjG.x, adjG.y]), false);
@@ -175,7 +177,7 @@ export class Bot {
     }
 
     // 4b. Hard goes after a guardian standing between it and a closed Vault.
-    if (this.level === "hard" && guardians.length && s.chests[MAP.VAULT].state === ChestState.Closed && this.bagPoints < p.greed) {
+    if (this.level === "hard" && me.hp >= 2 && guardians.length && s.chests[MAP.VAULT].state === ChestState.Closed && this.bagPoints < p.greed) {
       const g = [...guardians].sort((a, b) => manhattan(pos, [a.x, a.y]) - manhattan(pos, [b.x, b.y]))[0];
       if (manhattan(pos, [g.x, g.y]) <= 8 && (await this.walk(s, pos, sides([g.x, g.y]).map((x) => x.tile), blocked))) return;
     }

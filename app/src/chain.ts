@@ -276,6 +276,9 @@ export interface RunState {
   /** Vault Guardians (public). */
   monsters: { x: number; y: number; homeX: number; homeY: number; hp: number; alive: boolean; lastAttackSlot: BN }[];
   lastTickSlot: BN;
+  /** Who scheduled the guardian crank, and the crank signer PDA (default until scheduled). */
+  crankAuthority: PublicKey;
+  crankSigner: PublicKey;
 }
 /** A seat's private loot. Readable on the TEE only by that seat's session key. */
 export interface BagState {
@@ -773,6 +776,17 @@ export class Chain {
       .remainingAccounts(this.bagMetas(run, players))
       .instruction();
     return this.sendEr(session, [ix], confirm);
+  }
+
+  /** Hands the Vault Guardians to the rollup's scheduler: a MagicBlock crank ticks them on-chain
+   *  until the timer ends, with no client involved. */
+  async startGuardians(session: Keypair, run: PublicKey, players: number) {
+    const ix = await this.program.methods
+      .startGuardians()
+      .accountsPartial({ payer: session.publicKey, run, magicProgram: MAGIC_PROGRAM_ID })
+      .remainingAccounts(this.bagMetas(run, players))
+      .instruction();
+    return this.sendEr(session, [ix], true);
   }
 
   /** Advances the Vault Guardians one step (rate-limited on-chain, so extra calls are no-ops). */

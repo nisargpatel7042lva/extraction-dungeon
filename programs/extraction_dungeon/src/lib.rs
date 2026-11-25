@@ -294,12 +294,20 @@ pub mod extraction_dungeon {
     /// key may call it (the host's client does, every ~0.6 s); calls closer together than
     /// MONSTER_TICK_SLOTS are no-ops, so extra callers can't speed the monsters up.
     /// remaining_accounts: every seat's Bag, in seat order (a bite can kill).
+    /// The signer is a seated session key, or the guardian crank's signer PDA (the rollup's
+    /// scheduler, see `start_guardians`). After the run is over it's a no-op, so the crank's last
+    /// few iterations don't fail.
     pub fn tick_monsters<'info>(ctx: Context<'info, Act<'info>>) -> Result<()> {
         let run = &mut ctx.accounts.run;
-        require!(run.status == RunStatus::Live as u8, DungeonError::NotLive);
+        let signer = ctx.accounts.signer.key();
+        let by_crank = run.crank_signer != Pubkey::default() && signer == run.crank_signer;
+        if !by_crank {
+            run.slot_of_signer(&signer)?;
+        }
         let clock = Clock::get()?;
-        require!(clock.unix_timestamp < run.ends_at, DungeonError::TimeUp);
-        run.slot_of_signer(&ctx.accounts.signer.key())?;
+        if run.status != RunStatus::Live as u8 || clock.unix_timestamp >= run.ends_at {
+            return Ok(());
+        }
         let slot = clock.slot;
         if run.last_tick_slot != 0 && slot < run.last_tick_slot.saturating_add(MONSTER_TICK_SLOTS) {
             return Ok(());
@@ -333,6 +341,70 @@ pub mod extraction_dungeon {
                 None => run.monster_step(mi, (m.home_x, m.home_y)),
             }
         }
+        Ok(())
+    }
+
+    /// ER. Hands the Vault Guardians to the rollup's own scheduler: a MagicBlock crank that calls
+    /// `tick_monsters` every GUARDIAN_CRANK_MILLIS until the run's timer ends, signed by the crank
+    /// signer PDA of the scheduling session key, so the monsters keep moving with nobody's browser
+    /// driving them. Any seated player can call it once the run is live (the host's client does);
+    /// the first caller becomes the task authority, and only that key may reschedule (same task
+    /// ID, so it replaces rather than duplicates).
+    /// remaining_accounts: every seat's Bag, in seat order (a bite can kill).
+    pub fn start_guardians<'info>(ctx: Context<'info, StartGuardians<'info>>) -> Result<()> {
+        let payer = ctx.accounts.payer.key();
+        let run_key = ctx.accounts.run.key();
+        let (now, ends_at, players) = {
+            let run = &ctx.accounts.run;
+            require!(run.status == RunStatus::Live as u8, DungeonError::NotLive);
+            run.slot_of_signer(&payer)?;
+            require!(
+                run.crank_authority == Pubkey::default() || run.crank_authority == payer,
+                DungeonError::CrankTaken
+            );
+            let now = Clock::get()?.unix_timestamp;
+            require!(now < run.ends_at, DungeonError::TimeUp);
+            (now, run.ends_at, run.player_count as usize)
+        };
+        require!(ctx.remaining_accounts.len() >= players, DungeonError::BadBag);
+        for (seat, bag) in ctx.remaining_accounts[..players].iter().enumerate() {
+            let expected = Pubkey::find_program_address(&[BAG_SEED, run_key.as_ref(), &[seat as u8]], &crate::ID).0;
+            require_keys_eq!(bag.key(), expected, DungeonError::BadBag);
+        }
+        let crank_signer = Pubkey::find_program_address(&[CRANK_SEED, payer.as_ref()], &CRANK_PROGRAM_ID).0;
+        {
+            let run = &mut ctx.accounts.run;
+            run.crank_authority = payer;
+            run.crank_signer = crank_signer;
+        }
+
+        let mut metas = vec![AccountMeta::new_readonly(crank_signer, true), AccountMeta::new(run_key, false)];
+        metas.extend(ctx.remaining_accounts[..players].iter().map(|b| AccountMeta::new(b.key(), false)));
+        let tick = anchor_lang::solana_program::instruction::Instruction {
+            program_id: crate::ID,
+            accounts: metas,
+            data: anchor_lang::InstructionData::data(&crate::instruction::TickMonsters {}),
+        };
+        // Enough iterations to cover the rest of the run, plus a few that no-op after it.
+        let iterations = (ends_at - now) * 1000 / GUARDIAN_CRANK_MILLIS + 5;
+        // Task IDs are global to the validator: derive one from the run's address.
+        let mut id = [0u8; 8];
+        id.copy_from_slice(&run_key.to_bytes()[..8]);
+        let task_id = i64::from_le_bytes(id) & i64::MAX;
+        let accs: &'info StartGuardians<'info> = ctx.accounts;
+        #[allow(deprecated)]
+        ephemeral_rollups_sdk::crank::ScheduleCrankCpi {
+            payer: accs.payer.as_ref(),
+            magic_program: &accs.magic_program,
+            instruction_accounts: &[],
+            args: ephemeral_rollups_sdk::crank::ScheduleTaskArgs {
+                task_id,
+                execution_interval_millis: GUARDIAN_CRANK_MILLIS,
+                iterations,
+                instructions: vec![tick],
+            },
+        }
+        .invoke()?;
         Ok(())
     }
 
@@ -677,6 +749,17 @@ pub struct Act<'info> {
     pub run: Account<'info, Run>,
 }
 
+#[derive(Accounts)]
+pub struct StartGuardians<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut)]
+    pub run: Account<'info, Run>,
+    /// CHECK: the Magic program (address-checked).
+    #[account(address = MAGIC_PROGRAM_ID)]
+    pub magic_program: AccountInfo<'info>,
+}
+
 #[vrf]
 #[derive(Accounts)]
 pub struct OpenChest<'info> {
@@ -794,4 +877,6 @@ pub enum DungeonError {
     StillChanneling,
     #[msg("Only the host can cancel this lobby yet")]
     CannotCancelYet,
+    #[msg("Another player already scheduled the guardians")]
+    CrankTaken,
 }

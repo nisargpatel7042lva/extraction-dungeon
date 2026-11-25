@@ -1384,8 +1384,14 @@ else void askDevice().then(() => initGuide());
 renderWallet();
 showConnect();
 
-// ---------- Vault Guardians: the host's tab keeps them moving ----------
+// ---------- Vault Guardians: a MagicBlock crank on the rollup moves them ----------
+// The host's tab schedules the crank once the run is live; from then on the rollup's own scheduler
+// ticks the guardians, so they keep going even if every tab closes. Only if no tick has landed for
+// a few seconds (scheduler down) does this tab nudge them itself; the on-chain rate limit makes
+// extra ticks harmless either way.
 let ticking = false;
+let crankAsked = "";
+let lastTick = { slot: "", at: 0 };
 setInterval(() => {
   const s = state;
   if (ticking || !s || s.status !== Status.Live || !onEr || !wallet || !runKey) return;
@@ -1394,9 +1400,23 @@ setInterval(() => {
   if (secondsLeft() === 0) return;
   const key = mySeat() >= 0 ? session : bots[0]?.session;
   if (!key) return;
+  const slot = s.lastTickSlot.toString();
+  if (slot !== lastTick.slot) lastTick = { slot, at: Date.now() };
+  const scheduled = !s.crankSigner.equals(PublicKey.default);
+  if (!scheduled && crankAsked !== runKey.toBase58()) {
+    crankAsked = runKey.toBase58();
+    ticking = true;
+    chain
+      .startGuardians(key, runKey, s.playerCount)
+      .then(() => track("guardian_crank_scheduled"))
+      .catch(() => (crankAsked = "")) // retried on the next pass
+      .finally(() => (ticking = false));
+    return;
+  }
+  if (scheduled && Date.now() - lastTick.at < 3000) return; // the crank is ticking
   ticking = true;
   chain
     .tickMonsters(key, runKey, s.playerCount)
     .catch(() => {}) // a tick that lands at the buzzer, or races another, is harmless
     .finally(() => (ticking = false));
-}, 600);
+}, 700);

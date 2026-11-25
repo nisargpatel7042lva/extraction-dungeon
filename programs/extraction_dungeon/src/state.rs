@@ -19,12 +19,20 @@ pub const EXTRACT_CHANNEL_SLOTS: u64 = 180;
 /// bite, and walk back home. Anyone seated can drive them with `tick_monsters`.
 pub const MAX_MONSTERS: usize = 2;
 pub const MONSTER_HP: u8 = 3;
-/// Monsters act at most once per tick, and ticks are at least this many ER slots apart (~0.55 s).
-pub const MONSTER_TICK_SLOTS: u64 = 50;
-/// A monster bites at most once per this many ER slots (~1 s).
-pub const MONSTER_ATTACK_SLOTS: u64 = 90;
+/// Monsters act at most once per tick, and ticks are at least this many ER slots apart (~0.75 s),
+/// so a player (who can step every transaction) can always outrun one.
+pub const MONSTER_TICK_SLOTS: u64 = 70;
+/// A monster bites at most once per this many ER slots (~2 s): killing a full-health player takes
+/// ~4 s of biting, while a player kills a guardian in ~1.2 s, so a fair fight is winnable.
+pub const MONSTER_ATTACK_SLOTS: u64 = 180;
 /// How far (in steps) from home a monster will wander while chasing.
-pub const MONSTER_LEASH: u8 = 4;
+pub const MONSTER_LEASH: u8 = 3;
+/// How often the rollup's scheduler (a MagicBlock crank) ticks the guardians.
+pub const GUARDIAN_CRANK_MILLIS: i64 = 700;
+/// The ER validator's crank executor; scheduled instructions are signed by the PDA
+/// `[CRANK_SEED, task authority]` under it.
+pub const CRANK_PROGRAM_ID: Pubkey = pubkey!("Crank11111111111111111111111111111111111111");
+pub const CRANK_SEED: &[u8] = b"crank-executor";
 /// Private loot for killing one.
 pub const MONSTER_BOUNTY: u16 = 2;
 
@@ -166,6 +174,10 @@ pub struct Run {
     pub monsters: [Monster; MAX_MONSTERS],
     /// ER slot of the last monster tick (rate limit).
     pub last_tick_slot: u64,
+    /// The session key that scheduled the guardian crank (its task authority), and the crank
+    /// signer PDA the rollup's scheduler signs `tick_monsters` with. Default until scheduled.
+    pub crank_authority: Pubkey,
+    pub crank_signer: Pubkey,
 }
 
 /// One player's loot. Delegated to the TEE rollup with a permission that only that player's
@@ -369,6 +381,8 @@ mod tests {
             created_at: 0,
             monsters: Default::default(),
             last_tick_slot: 0,
+            crank_authority: Pubkey::default(),
+            crank_signer: Pubkey::default(),
         };
         (run, points)
     }

@@ -222,6 +222,18 @@ async function main() {
   await chain.finishExtract(sessions[1], run);
   check((await chain.fetchRun(run))!.state.players[1].extracted, "extracted after a full channel");
 
+  // The guardians' crank: schedule it on the rollup, then watch the rollup's own scheduler tick
+  // them (nothing in this script calls tick_monsters).
+  await chain.startGuardians(sessions[0], run, 2);
+  const t0Tick = (await chain.fetchRun(run))!.state.lastTickSlot.toString();
+  let cranked = false;
+  for (let i = 0; i < 24 && !cranked; i++) {
+    await sleep(500);
+    const s = (await chain.fetchRun(run))!.state;
+    cranked = !s.crankSigner.equals(PublicKey.default) && s.lastTickSlot.toString() !== t0Tick;
+  }
+  check(cranked, "the rollup's crank ticks the guardians on its own");
+
   await chain.endRun(sessions[1], run, 2);
   const final = await chain.waitForBase(run, Status.Ended, 90_000, 2);
   log("run + bags committed back to base");

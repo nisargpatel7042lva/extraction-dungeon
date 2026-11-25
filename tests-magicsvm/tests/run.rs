@@ -298,6 +298,14 @@ impl World {
         self.act(seat, ixs::TickMonsters {})
     }
 
+    /// Hands the guardians to the rollup's scheduler (a MagicBlock crank), signed by `seat`.
+    fn start_guardians(&mut self, seat: usize) -> Result<(), String> {
+        let s = self.sessions[seat].insecure_clone();
+        let mut i = ix(self.program, ixs::StartGuardians {}, acc::StartGuardians { payer: pk(&s), run: self.run, magic_program: MAGIC_PROGRAM_ID });
+        i.accounts.extend(self.bags());
+        self.send(Ephemeral, &[&s], i)
+    }
+
     /// Walks next to guardian `mi` and hits it until it dies.
     fn slay_guardian(&mut self, seat: usize, mi: usize) {
         let g = self.state(Ephemeral).monsters[mi];
@@ -442,6 +450,7 @@ const EXITS_LOCKED: u32 = 6025;
 const NOT_CHANNELING: u32 = 6026;
 const STILL_CHANNELING: u32 = 6027;
 const BLOCKED: u32 = 6009;
+const CRANK_TAKEN: u32 = 6029;
 const CANNOT_END_YET: u32 = 6016;
 const BAD_BAG: u32 = 6024;
 const CANNOT_CANCEL_YET: u32 = 6028;
@@ -880,4 +889,45 @@ fn a_guardian_can_kill_and_the_bag_drops_as_a_sack() {
     assert!(s.dropped[0].present && s.dropped[0].points == 0, "a sack drops, contents hidden");
     let bag = w.read_bag(Ephemeral, 0);
     assert_eq!((bag.points, bag.dropped), (0, 1));
+}
+
+#[test]
+fn the_rollup_crank_drives_the_guardians_with_no_client_ticking() {
+    let mut w = World::new(1);
+    w.start();
+    w.start_guardians(0).expect("start_guardians");
+    let s = w.state(Ephemeral);
+    assert_ne!(s.crank_signer, Pubkey::default(), "crank signer recorded");
+    assert_eq!(s.crank_authority, pk(&w.sessions[0]));
+    let g = s.monsters[0];
+    // Stand two steps from the guardian's post, inside its leash. Nobody calls tick_monsters from
+    // here on: only the scheduler's executions (during the warp) can move it.
+    let dirs = route(w.pos(0), &[(g.x - 2, g.y)], &w.others(0));
+    w.walk(0, &dirs);
+    w.advance_slots(MONSTER_TICK_SLOTS * 3);
+    let g1 = w.state(Ephemeral).monsters[0];
+    assert_eq!((g1.x, g1.y), (g.x - 1, g.y), "the crank moved it next to the player");
+    w.advance_slots(MONSTER_ATTACK_SLOTS * 2);
+    assert!(w.state(Ephemeral).players[0].hp < START_HP, "the crank made it bite");
+}
+
+#[test]
+fn only_one_player_owns_the_guardian_crank() {
+    let mut w = World::new(2);
+    w.start();
+    w.start_guardians(0).expect("seat 0 schedules");
+    let e = w.start_guardians(1).expect_err("seat 1 can't take it over");
+    assert!(err_code(&e, CRANK_TAKEN), "{e}");
+    w.start_guardians(0).expect("the owner may reschedule (same task id)");
+}
+
+#[test]
+fn a_tick_after_the_timer_is_a_harmless_no_op() {
+    let mut w = World::new(1);
+    w.start();
+    let before = w.state(Ephemeral).monsters;
+    w.warp_seconds(DURATION as i64);
+    w.tick(0).expect("no-op, not an error, so the crank's last iterations don't fail");
+    let after = w.state(Ephemeral).monsters;
+    assert_eq!(before.map(|g| (g.x, g.y, g.hp)), after.map(|g| (g.x, g.y, g.hp)));
 }
