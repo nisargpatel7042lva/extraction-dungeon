@@ -24,6 +24,7 @@ import { connectPhantom, devWallet, hasPhantom, isMobileBrowser, sessionKey, wai
 import { Bot, BotLevel, LEVELS } from "./bot";
 import bs58 from "bs58";
 import { initGuide } from "./guide";
+import { initAnalytics, track } from "./analytics";
 import { isMuted, music, setMuted, sfx } from "./sound";
 
 // ---------- setup ----------
@@ -70,6 +71,7 @@ let device: Device = savedDevice ?? guessDevice();
 let isTouch = device !== "pc";
 function applyDevice(d: Device) {
   device = d;
+  track("device_selected", { device: d });
   isTouch = d !== "pc";
   try {
     localStorage.setItem("ed:device", d);
@@ -196,6 +198,7 @@ async function addBot(level: BotLevel) {
   const session0 = Keypair.generate();
   const seat = await chain.joinBot(wallet!, runKey!, wallet0, session0.publicKey);
   bots.push({ seat, level, wallet: wallet0, session: session0 });
+  track("cpu_added", { level });
   saveBots();
   if (state?.status === Status.Lobby) showLobby(); // the chain update may have rendered before we knew it's a bot
   toast(`${LEVELS[level].label} bot joined. Making its bag private…`);
@@ -416,6 +419,7 @@ function showConnect() {
     ${net === "devnet" ? `<p class="muted">Runs on Solana <b>devnet</b>: switch Phantom to devnet (Settings → Developer settings → Testnet mode) and grab free devnet SOL at <a href="https://faucet.solana.com" target="_blank" rel="noopener">faucet.solana.com</a>. A run costs about 0.02 SOL plus your stake.</p>` : ""}`;
   $("dev")?.addEventListener("click", () => guarded("Dev wallet", async () => connected(await devWallet(chain))));
   $("ph")?.addEventListener("click", () => guarded("Phantom", async () => connected(await connectPhantom())));
+  screen.querySelector("a.btn")?.addEventListener("click", () => track("open_in_phantom", { device }));
   // Inside a wallet app's browser the provider can appear just after load: re-render when it does.
   if (!hasPhantom())
     void waitForPhantom(4000).then((ok) => {
@@ -425,6 +429,7 @@ function showConnect() {
 
 async function connected(w: WalletSigner) {
   wallet = w;
+  track("wallet_connected", { device });
   renderWallet();
   if (runKey) await openRun(runKey);
   else showCreate();
@@ -483,6 +488,7 @@ function showCreate() {
         url.searchParams.set("run", run.toBase58());
         history.replaceState(null, "", url);
         runKey = run;
+        track("game_created", { stake_sol: entry / LAMPORTS_PER_SOL, timer_s: dur, device });
         await openRun(run);
       } finally {
         ($("create") as HTMLButtonElement | null)?.removeAttribute("disabled");
@@ -711,6 +717,7 @@ function showLobby() {
       if (!confirm("Cancel this lobby and refund every stake?")) return;
       ($("cancel") as HTMLButtonElement).disabled = true;
       await chain.cancelRun(wallet!, runKey!, s);
+      track("lobby_cancelled", { players: s.playerCount });
       toast("Lobby cancelled: every stake refunded");
     }),
   );
@@ -731,6 +738,7 @@ function showLobby() {
       ($("join") as HTMLButtonElement).disabled = true;
       await needSol(Number(s.entryLamports.toString()) + 30_000_000, "joining (stake + fees)");
       const seat = await chain.joinRun(wallet!, runKey!, session!.publicKey);
+      track("game_joined", { stake_sol: Number(s.entryLamports.toString()) / LAMPORTS_PER_SOL, device });
       toast("Joined. Making your bag private…");
       await protectBag(seat);
     }),
@@ -739,6 +747,7 @@ function showLobby() {
     guarded("Start", async () => {
       ($("start") as HTMLButtonElement).disabled = true;
       await chain.startRun(wallet!, runKey!, s.runId);
+      track("game_started", { players: s.playerCount, cpus: bots.length, map: MAP.name, stake_sol: Number(s.entryLamports.toString()) / LAMPORTS_PER_SOL });
       await waitForEr();
     }),
   );
@@ -913,6 +922,7 @@ async function returnSessionFunds() {
   }
 }
 
+const finishedTracked = new Set<string>();
 async function showEnded() {
   const s = state!;
   setMode("landing");
@@ -938,6 +948,11 @@ async function showEnded() {
   const myShare = me >= 0 ? share(me) : 0;
   const iWon = me >= 0 && s.players[me].extracted;
   const iTopped = !!best && best.i === me;
+  if (runKey && !finishedTracked.has(runKey.toBase58())) {
+    finishedTracked.add(runKey.toBase58());
+    const outcome = me < 0 ? "spectator" : s.players[me].extracted ? "escaped" : s.players[me].alive ? "trapped" : "slain";
+    track("run_finished", { outcome, points: me >= 0 ? points[me] : 0, players: s.playerCount, practice: pot === 0, map: MAP.name });
+  }
   const practice = pot === 0;
   const title = !best
     ? { t: "GAME OVER", cls: "neon-red", sub: practice ? "Nobody made it out" : "Nobody made it out: every stake is refunded" }
@@ -1022,6 +1037,7 @@ async function showEnded() {
       btn.disabled = true;
       btn.textContent = "Paying out…";
       const sig = await chain.settleRun(wallet!, runKey!, s);
+      track("payout_claimed", { won: iWon, amount_sol: myShare / LAMPORTS_PER_SOL });
       showProof(sig, "payout");
       sfx.coin();
       if (iWon && myShare > 0) coinRain(60);
@@ -1252,6 +1268,7 @@ $("touch-extract").addEventListener("pointerdown", (e) => {
   exitsIn,
 };
 
+initAnalytics();
 if (savedDevice) initGuide();
 else void askDevice().then(() => initGuide());
 renderWallet();

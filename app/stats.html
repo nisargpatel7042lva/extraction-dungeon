@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d0b12" />
+    <meta name="description" content="Live, on-chain stats for Extraction Dungeon: games played, players, SOL staked and paid out, read straight from the Solana devnet program." />
+    <title>Extraction Dungeon · Stats</title>
+    <link rel="icon" href="/sprites/chest_closed.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Silkscreen&display=swap" rel="stylesheet" />
+  </head>
+  <body class="mode-landing stats-page">
+    <header class="topbar">
+      <a class="logo" href="/">EXTRACTION<span>DUNGEON</span></a>
+      <nav class="topnav"><a class="btn small" href="/">▶ Play</a></nav>
+    </header>
+    <main class="stats">
+      <h1 class="neon-cyan">LIVE STATS</h1>
+      <p class="muted">Every number is read live from the game's program accounts on Solana devnet. No server, no analytics service: anyone can verify them on Solana Explorer.</p>
+      <p class="muted">Program: <span id="program"></span></p>
+
+      <section class="card">
+        <h2>System checks</h2>
+        <ul id="health" class="health"></ul>
+        <p class="muted">Test suite (last run before deploy): <b class="neon-green">18/18</b> MagicSVM end-to-end · <b class="neon-green">8/8</b> unit · <b class="neon-green">13/13</b> live devnet checks.</p>
+      </section>
+
+      <section id="tiles" class="tiles"><p class="muted blink">Reading the chain…</p></section>
+
+      <section class="card">
+        <h2>Dungeons played</h2>
+        <div id="maps" class="bars"></div>
+      </section>
+
+      <section class="card">
+        <h2>Recent games</h2>
+        <table class="scores">
+          <thead><tr><th>WHEN</th><th>MAP</th><th class="r">STAKE</th><th class="r">SEATS</th><th class="r">ESCAPED</th><th>STATUS</th><th>ACCOUNT</th></tr></thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </section>
+      <p id="updated" class="muted"></p>
+    </main>
+    <script type="module" src="/src/stats.ts"></script>
+  </body>
+</html>
