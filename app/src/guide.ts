@@ -11,7 +11,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "chest_closed",
     title: "2. Loot chests",
-    body: "Move with <kbd>WASD</kbd>/<kbd>arrow keys</kbd>, or the on-screen pad on a phone. Walk into a chest to open it, and MagicBlock VRF rolls the loot: <b>common 1 pt</b> (60%), <b>rare 3 pts</b> (30%), <b>legendary 8 pts</b> (10%). The golden <b>Vault</b> in the middle never rolls common, so expect company.",
+    body: "Move with <kbd>WASD</kbd>/<kbd>arrow keys</kbd>, or the on-screen pad on a phone. Walk into a chest to open it, and MagicBlock VRF rolls the loot: <b>common 1 pt</b> (50%), <b>rare 3 pts</b> (30%), <b>legendary 8 pts</b> (10%), and 1 chest in 10 is a <b>mimic</b> that bites for 1 heart and gives nothing. The golden <b>Vault</b> in the middle never rolls common or a mimic, but two <b>Vault Guardians</b> stand beside it: they chase anyone who comes near and bite. Three hits kill one, for a +2 bounty.",
   },
   {
     img: "hero1",

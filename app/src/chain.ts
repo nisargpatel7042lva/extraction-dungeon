@@ -90,8 +90,10 @@ export class OutdatedRunError extends Error {
 /** Mirrors LOBBY_TIMEOUT_SECS: after this, anyone can cancel a lobby that never started. */
 export const LOBBY_TIMEOUT_SECS = 600;
 export const ChestState = { Closed: 0, Opening: 1, Opened: 2 } as const;
-export const TIER_NAMES: Record<number, string> = { 1: "COMMON", 2: "RARE", 3: "LEGENDARY" };
-export const TIER_POINTS: Record<number, number> = { 1: 1, 2: 3, 3: 8 };
+export const TIER_NAMES: Record<number, string> = { 1: "COMMON", 2: "RARE", 3: "LEGENDARY", 4: "MIMIC! -1♥" };
+export const TIER_POINTS: Record<number, number> = { 1: 1, 2: 3, 3: 8, 4: 0 };
+/** Mirrors TIER_MIMIC: a chest that bites (1 damage, no loot). */
+export const TIER_MIMIC = 4;
 /** Mirrors ATTACK_COOLDOWN_SLOTS (36 slots at ~11ms). The program is the authority. */
 export const ATTACK_COOLDOWN_MS = 420;
 /** Mirrors EXTRACT_CHANNEL_SLOTS (180 slots at ~11ms), plus a little slack for slot jitter. */
@@ -271,6 +273,9 @@ export interface RunState {
   /** Index into `MAPS`. */
   layout: number;
   createdAt: BN;
+  /** Vault Guardians (public). */
+  monsters: { x: number; y: number; homeX: number; homeY: number; hp: number; alive: boolean; lastAttackSlot: BN }[];
+  lastTickSlot: BN;
 }
 /** A seat's private loot. Readable on the TEE only by that seat's session key. */
 export interface BagState {
@@ -768,6 +773,16 @@ export class Chain {
       .remainingAccounts(this.bagMetas(run, players))
       .instruction();
     return this.sendEr(session, [ix], confirm);
+  }
+
+  /** Advances the Vault Guardians one step (rate-limited on-chain, so extra calls are no-ops). */
+  async tickMonsters(session: Keypair, run: PublicKey, players: number) {
+    const ix = await this.program.methods
+      .tickMonsters()
+      .accountsPartial({ signer: session.publicKey, run })
+      .remainingAccounts(this.bagMetas(run, players))
+      .instruction();
+    return this.sendEr(session, [ix], true);
   }
 
   /** Starts channeling an extraction (stand still ~2s, then `finishExtract`). */

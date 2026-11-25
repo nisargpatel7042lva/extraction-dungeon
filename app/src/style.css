@@ -264,8 +264,11 @@ kbd { font: 9px var(--px); background: var(--panel2); border: 2px solid var(--li
 .dot { width: 12px; height: 12px; flex: none; box-shadow: 0 0 0 2px #000; }
 
 /* loading screen */
-.loading { text-align: center; padding: 18px 0 6px; }
-.loading .bar { height: 18px; border: 3px solid var(--cyan); margin: 18px auto 10px; max-width: 320px; padding: 2px; }
+.loading { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-height: 220px; padding: 8px 0; }
+.loading::before { content: ""; width: 56px; height: 56px; margin-bottom: 14px; background: url(/sprites/chest_closed.png) center / contain no-repeat; image-rendering: pixelated; animation: bob 0.8s steps(2) infinite; filter: drop-shadow(0 0 14px rgba(255, 210, 61, 0.7)); }
+.loading h2 { margin: 0; }
+.loading p { margin: 0; max-width: 34ch; }
+.loading .bar { height: 18px; width: 100%; border: 3px solid var(--cyan); margin: 18px auto 12px; max-width: 320px; padding: 2px; overflow: hidden; box-shadow: 0 0 12px rgba(61, 242, 255, 0.35); }
 .loading .bar i { display: block; height: 100%; width: 40%; background: repeating-linear-gradient(90deg, var(--cyan) 0 12px, transparent 12px 16px); animation: load 1.2s steps(8) infinite; }
 @keyframes load { from { margin-left: -40%; } to { margin-left: 100%; } }
 
@@ -656,3 +659,102 @@ a.btn:active { transform: translate(4px, 4px); box-shadow: none; }
 .stats-page .scores td { font-size: 18px; }
 .stats-page .scores a { color: var(--cyan); }
 @media (max-width: 560px) { .stats-page .scores th:nth-child(5), .stats-page .scores td:nth-child(5) { display: none; } }
+
+
+/* ---------- kill feed ---------- */
+#feed { position: absolute; right: 12px; bottom: 16px; width: 330px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 6; }
+.feed-row { background: rgba(5, 4, 10, 0.88); border-left: 5px solid var(--cyan); box-shadow: 3px 3px 0 #000; padding: 6px 10px; font: 20px/1.1 var(--term); color: var(--text); transition: opacity 0.7s, transform 0.7s; animation: feed-in 0.25s ease-out; }
+.feed-row b { color: #fff; }
+.feed-row.red { border-color: var(--red); }
+.feed-row.green { border-color: var(--green); }
+.feed-row.gold { border-color: var(--gold); }
+.feed-row.out { opacity: 0; transform: translateX(30px); }
+@keyframes feed-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+body.touch #feed { width: auto; left: 50%; right: auto; transform: translateX(-50%); bottom: auto; top: calc(var(--hud-h, 80px) + 14px); align-items: center; }
+body.touch .feed-row { font-size: 16px; padding: 4px 8px; }
+@media (orientation: landscape) { body.touch #feed { top: calc(8px + var(--safe-t)); max-width: 40%; } }
+
+/* ---------- attract mode: gameplay loop behind the landing ---------- */
+#attract { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: var(--bg); pointer-events: none; }
+#bg-video {
+  position: absolute;
+  inset: -2%;
+  width: 104%;
+  height: 104%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  filter: saturate(1.3) brightness(0.8) blur(1px);
+  opacity: 0.9;
+}
+/* Darken toward the content so text and cards stay readable; keep the neon grid on top. */
+#attract::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(61, 242, 255, 0.05) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, rgba(61, 242, 255, 0.05) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, rgba(13, 11, 18, 0.9) 0%, rgba(13, 11, 18, 0.55) 42%, rgba(13, 11, 18, 0.25) 62%, rgba(13, 11, 18, 0.5) 100%),
+    radial-gradient(ellipse at 50% -20%, rgba(255, 61, 199, 0.28), transparent 55%),
+    radial-gradient(ellipse at 50% 120%, rgba(61, 242, 255, 0.2), transparent 55%);
+}
+.attract-tag {
+  position: absolute;
+  right: clamp(12px, 3vw, 32px);
+  bottom: clamp(12px, 3vw, 28px);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 9px var(--px);
+  letter-spacing: 1px;
+  color: var(--text);
+  background: rgba(13, 11, 18, 0.75);
+  border: 2px solid var(--line);
+  padding: 6px 9px;
+}
+.attract-tag i { width: 8px; height: 8px; background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink 1s steps(2, start) infinite; }
+body.mode-landing { background: transparent; }
+body.mode-live #attract { display: none; }
+@media (prefers-reduced-motion: reduce) { #bg-video { display: none; } #attract { background: var(--bg) url(/media/bg-poster.jpg) center / cover; } }
+@media (max-width: 860px) {
+  #attract::after { background:
+    linear-gradient(rgba(61, 242, 255, 0.05) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, rgba(61, 242, 255, 0.05) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(180deg, rgba(13, 11, 18, 0.55) 0%, rgba(13, 11, 18, 0.85) 45%, rgba(13, 11, 18, 0.92) 100%); }
+  .attract-tag { display: none; }
+}
+
+/* ---------- landing balance ---------- */
+.topbar { backdrop-filter: blur(6px); background: linear-gradient(180deg, rgba(22, 15, 42, 0.92), rgba(11, 8, 21, 0.92)); }
+#landing { align-items: center; min-height: calc(100dvh - 60px); align-content: center; }
+#screen { align-self: center; }
+.hero h1 { margin-top: 14px; }
+.insert-coin { margin-bottom: 4px; }
+.features { margin-top: 18px; }
+.features li { background: rgba(17, 12, 32, 0.82); backdrop-filter: blur(3px); display: flex; flex-direction: column; }
+.features span { line-height: 1.15; }
+.card { background: linear-gradient(180deg, rgba(31, 22, 56, 0.94), rgba(17, 12, 32, 0.94)); backdrop-filter: blur(4px); }
+#screen > h2:first-child, #screen > .loading:first-child { margin-top: 0; }
+#screen .row:last-child { margin-bottom: 0; }
+/* Mid widths: icons only for the secondary topbar buttons so nothing wraps. */
+@media (max-width: 1024px) {
+  .topnav { gap: 7px; }
+  .topnav button[data-guide] { white-space: nowrap; }
+  .logo { font-size: 12px; }
+}
+@media (max-width: 860px) {
+  #landing { min-height: 0; padding-top: 22px; }
+  .hero { text-align: center; }
+  .hero-art { justify-content: center; }
+  .lead { margin-left: auto; margin-right: auto; }
+  #screen { width: 100%; max-width: 560px; justify-self: center; }
+  .features { max-width: 560px; width: 100%; justify-self: center; margin-top: 0; }
+}
+@media (max-width: 560px) {
+  /* Phones: logo on one row, controls on the next, so the bar never pushes the page sideways. */
+  .topbar { flex-wrap: wrap; justify-content: center; row-gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .logo { flex: 1 0 100%; text-align: center; font-size: 12px; }
+  .topnav { flex-wrap: wrap; justify-content: center; }
+  .insert-coin { font-size: 9px; line-height: 1.6; }
+}

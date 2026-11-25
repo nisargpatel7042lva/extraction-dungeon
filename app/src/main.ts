@@ -12,6 +12,7 @@ import {
   RunState,
   Status,
   TIER_NAMES,
+  TIER_MIMIC,
   LOBBY_TIMEOUT_SECS,
   OutdatedRunError,
   WalletSigner,
@@ -313,6 +314,12 @@ function setMode(mode: "landing" | "live") {
   stage.hidden = mode !== "live";
   if (mode === "live") music.start();
   else music.stop();
+  // The attract-mode gameplay loop only runs behind the landing screens.
+  const bg = document.getElementById("bg-video") as HTMLVideoElement | null;
+  if (bg) {
+    if (mode === "live") bg.pause();
+    else bg.play().catch(() => {});
+  }
   const h = (document.querySelector(".topbar") as HTMLElement).offsetHeight;
   document.documentElement.style.setProperty("--topbar-h", `${h}px`);
 }
@@ -534,13 +541,17 @@ function watch() {
 
 function apply(s: RunState, isEr: boolean) {
   const wasLive = state?.status === Status.Live && onEr;
+  const prev = state;
   state = s;
   onEr = isEr;
   useLayout(s.layout ?? 0);
   if (s.status === Status.Lobby) return showLobby();
   if (s.status === Status.Live) {
     if (!isEr) return void waitForEr();
-    if (!wasLive) sfx.start();
+    if (!wasLive) {
+      sfx.start();
+      resetAnnouncer();
+    } else if (prev && prev.status === Status.Live) announce(prev, s);
     revealMyChests();
     return showLive();
   }
@@ -797,8 +808,97 @@ function revealMyChests() {
     if (c.state === ChestState.Opened && c.opener === me && !revealedChests.has(i)) {
       revealedChests.add(i);
       scene?.revealChest(i, myBag!.lastTier, `${i === MAP.VAULT ? "VAULT: " : ""}${TIER_NAMES[myBag!.lastTier] ?? "?"}`);
+      if (myBag!.lastTier === TIER_MIMIC) {
+        banner("MIMIC!", "#ff4d6d");
+        feed(`🧰 A mimic bit <b>YOU</b>`, "red");
+      } else if (myBag!.lastTier === 3) banner("LEGENDARY!", "#ffd23d");
     }
   });
+}
+
+// ---------- announcer + kill feed ----------
+// Only public facts are announced (deaths, escapes, who opened the Vault). Nobody else's loot is
+// ever revealed: "escaped with N" is shown for your own escape only.
+let firstBlood = false;
+let lastStanding = false;
+let hurryShown = false;
+function resetAnnouncer() {
+  bannerQueue.length = 0;
+  firstBlood = false;
+  lastStanding = false;
+  hurryShown = false;
+  const el = document.getElementById("feed");
+  if (el) el.innerHTML = "";
+}
+const nameOf = (i: number) => (i === mySeat() ? "YOU" : who(i, state!.players[i].wallet).replace("🤖 ", ""));
+/** Big banners play one at a time (two at once would draw on top of each other). */
+const bannerQueue: [string, string][] = [];
+let bannerBusy = false;
+function banner(text: string, color: string) {
+  bannerQueue.push([text, color]);
+  if (!bannerBusy) nextBanner();
+}
+function nextBanner() {
+  const next = bannerQueue.shift();
+  if (!next) {
+    bannerBusy = false;
+    return;
+  }
+  bannerBusy = true;
+  scene?.flashText(next[0], next[1]);
+  setTimeout(nextBanner, 1300);
+}
+function feed(html: string, tone: "red" | "green" | "gold" | "cyan" = "cyan") {
+  const el = document.getElementById("feed");
+  if (!el) return;
+  const row = document.createElement("div");
+  row.className = `feed-row ${tone}`;
+  row.innerHTML = html;
+  el.prepend(row);
+  while (el.children.length > 4) el.lastElementChild!.remove();
+  setTimeout(() => row.classList.add("out"), 6000);
+  setTimeout(() => row.remove(), 6800);
+}
+function announce(prev: RunState, s: RunState) {
+  const me = mySeat();
+  const n = s.playerCount;
+  for (let j = 0; j < n; j++) {
+    const was = prev.players[j];
+    const now = s.players[j];
+    if (was.alive && !now.alive) {
+      const killer = [...Array(n).keys()].find((i) => s.players[i].kills > prev.players[i].kills);
+      const byGuardian = (prev.monsters ?? []).some((g) => g.alive && Math.abs(g.x - was.x) + Math.abs(g.y - was.y) <= 2);
+      if (killer === undefined) feed(byGuardian ? `👹 A Vault Guardian got <b>${esc(nameOf(j))}</b>` : `🧰 A mimic got <b>${esc(nameOf(j))}</b>`, "red");
+      else feed(`<b>${esc(nameOf(killer))}</b> ⚔ <b>${esc(nameOf(j))}</b>`, "red");
+      if (!firstBlood) {
+        firstBlood = true;
+        banner("FIRST BLOOD", "#ff4d6d");
+      }
+    }
+    if (!was.extracted && now.extracted) {
+      feed(`🚪 <b>${esc(nameOf(j))}</b> escaped`, "green");
+      if (j === me) banner(`ESCAPED WITH ${myBag?.points ?? 0}`, "#4ef0a0");
+    }
+  }
+  (s.monsters ?? []).forEach((g, k) => {
+    const was = prev.monsters?.[k];
+    if (was?.alive && !g.alive) {
+      const by = [...Array(n).keys()].find((i) => s.players[i].alive && Math.abs(s.players[i].x - was.x) + Math.abs(s.players[i].y - was.y) === 1);
+      feed(by === undefined ? `👹 A Vault Guardian fell` : `<b>${esc(nameOf(by))}</b> ⚔ a Vault Guardian`, "gold");
+      banner("GUARDIAN SLAIN", "#b98cff");
+    }
+  });
+  const v = MAP.VAULT;
+  if (prev.chests[v].state !== ChestState.Opened && s.chests[v].state === ChestState.Opened) {
+    feed(`👑 <b>${esc(nameOf(s.chests[v].opener))}</b> cracked the Vault`, "gold");
+    banner("VAULT CRACKED", "#ffd23d");
+  }
+  const active = (r: RunState) => r.players.slice(0, r.playerCount).map((p, i) => ({ p, i })).filter(({ p }) => p.alive && !p.extracted);
+  const left = active(s);
+  if (!lastStanding && n > 1 && active(prev).length > 1 && left.length === 1) {
+    lastStanding = true;
+    banner(left[0].i === me ? "LAST ONE STANDING" : `${nameOf(left[0].i)} IS LAST`, "#3df2ff");
+  }
 }
 
 // Countdowns follow the rollup's clock, not the device's (they differ by seconds).
@@ -900,6 +1000,10 @@ setInterval(() => {
   hud.querySelectorAll(".xin").forEach((e) => (e.textContent = clock(xIn)));
   if (left > 0 && left <= 10) sfx.tick();
   music.setHurry(left > 0 && left <= 30);
+  if (left > 0 && left <= 30 && !hurryShown && state?.status === Status.Live) {
+    hurryShown = true;
+    banner("HURRY UP!", "#ff3dc7");
+  }
 }, 1000);
 setInterval(() => {
   const bar = hud.querySelector<HTMLElement>(".meter i");
@@ -1103,7 +1207,11 @@ let predicted: { x: number; y: number; at: number } | null = null;
 const PREDICT_MS = 1500;
 
 function walkable(x: number, y: number) {
-  return MAP.LAYOUT[y]?.[x] === "." && !MAP.CHESTS.some(([cx, cy]) => cx === x && cy === y);
+  return (
+    MAP.LAYOUT[y]?.[x] === "." &&
+    !MAP.CHESTS.some(([cx, cy]) => cx === x && cy === y) &&
+    !(state?.monsters ?? []).some((g) => g.alive && g.x === x && g.y === y)
+  );
 }
 
 function predict(x: number, y: number) {
@@ -1147,7 +1255,9 @@ async function directed(dir: number) {
     if (s.chests[chest].state === ChestState.Closed) await chain.openChest(session!, runKey!, me, chest);
     return;
   }
-  const target = s.players.slice(0, s.playerCount).some((o) => o.alive && !o.extracted && o.x === tx && o.y === ty);
+  const target =
+    s.players.slice(0, s.playerCount).some((o) => o.alive && !o.extracted && o.x === tx && o.y === ty) ||
+    (s.monsters ?? []).some((g) => g.alive && g.x === tx && g.y === ty);
   if (target) {
     if (attackReady() < 1) return; // the program enforces the cooldown; skip doomed txs
     lastAttackAt = performance.now();
@@ -1273,3 +1383,20 @@ if (savedDevice) initGuide();
 else void askDevice().then(() => initGuide());
 renderWallet();
 showConnect();
+
+// ---------- Vault Guardians: the host's tab keeps them moving ----------
+let ticking = false;
+setInterval(() => {
+  const s = state;
+  if (ticking || !s || s.status !== Status.Live || !onEr || !wallet || !runKey) return;
+  if (!wallet.publicKey.equals(s.authority)) return;
+  if (!(s.monsters ?? []).some((g) => g.alive)) return;
+  if (secondsLeft() === 0) return;
+  const key = mySeat() >= 0 ? session : bots[0]?.session;
+  if (!key) return;
+  ticking = true;
+  chain
+    .tickMonsters(key, runKey, s.playerCount)
+    .catch(() => {}) // a tick that lands at the buzzer, or races another, is harmless
+    .finally(() => (ticking = false));
+}, 600);

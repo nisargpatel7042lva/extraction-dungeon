@@ -200,6 +200,7 @@ pub mod extraction_dungeon {
         require!(run.player_count > 0, DungeonError::NoPlayers);
         run.status = RunStatus::Live as u8;
         run.ends_at = Clock::get()?.unix_timestamp + run.duration_secs as i64;
+        run.spawn_monsters();
         Ok(())
     }
 
@@ -222,7 +223,7 @@ pub mod extraction_dungeon {
         let (nx, ny) = map::step(p.x, p.y, dir).ok_or(DungeonError::BadDirection)?;
         let m = map::get(run.layout);
         require!(
-            !m.is_wall(nx, ny) && !m.is_chest(nx, ny) && run.active_at(nx, ny).is_none(),
+            !m.is_wall(nx, ny) && !m.is_chest(nx, ny) && run.active_at(nx, ny).is_none() && run.monster_at(nx, ny).is_none(),
             DungeonError::Blocked
         );
         run.players[i].x = nx;
@@ -245,8 +246,9 @@ pub mod extraction_dungeon {
         Ok(())
     }
 
-    /// ER. Hits the active player on the adjacent tile in `dir` for 1 damage, at most once per
-    /// ATTACK_COOLDOWN_SLOTS. A kill drops the victim's whole bag on their tile.
+    /// ER. Hits the active player (or Vault Guardian) on the adjacent tile in `dir` for 1 damage, at
+    /// most once per ATTACK_COOLDOWN_SLOTS. A kill drops the victim's whole bag on their tile;
+    /// killing a guardian pays MONSTER_BOUNTY into the attacker's private bag.
     /// remaining_accounts: every seat's Bag, in seat order.
     pub fn attack<'info>(ctx: Context<'info, Act<'info>>, dir: u8) -> Result<()> {
         let run = &mut ctx.accounts.run;
@@ -258,6 +260,19 @@ pub mod extraction_dungeon {
             DungeonError::AttackCooldown
         );
         let (tx, ty) = map::step(p.x, p.y, dir).ok_or(DungeonError::BadDirection)?;
+        if run.active_at(tx, ty).is_none() {
+            let mi = run.monster_at(tx, ty).ok_or(DungeonError::NoTarget)?;
+            run.players[i].last_attack_slot = slot;
+            run.players[i].extract_start_slot = 0;
+            run.monsters[mi].hp = run.monsters[mi].hp.saturating_sub(1);
+            if run.monsters[mi].hp == 0 {
+                run.monsters[mi].alive = false;
+                let mut mine = load_bag(ctx.remaining_accounts, &run.key(), i)?;
+                mine.points = mine.points.saturating_add(MONSTER_BOUNTY);
+                mine.exit(&crate::ID)?;
+            }
+            return Ok(());
+        }
         let t = run.active_at(tx, ty).ok_or(DungeonError::NoTarget)?;
         run.players[i].last_attack_slot = slot;
         run.players[i].extract_start_slot = 0; // attacking cancels your own extraction
@@ -270,6 +285,53 @@ pub mod extraction_dungeon {
             victim.dropped = victim.dropped.saturating_add(victim.points);
             victim.points = 0;
             victim.exit(&crate::ID)?;
+        }
+        Ok(())
+    }
+
+    /// ER. Advances the Vault Guardians by one step: each chases the nearest player near its home,
+    /// bites (1 damage, interrupts extraction) when adjacent, or walks back home. Any seated session
+    /// key may call it (the host's client does, every ~0.6 s); calls closer together than
+    /// MONSTER_TICK_SLOTS are no-ops, so extra callers can't speed the monsters up.
+    /// remaining_accounts: every seat's Bag, in seat order (a bite can kill).
+    pub fn tick_monsters<'info>(ctx: Context<'info, Act<'info>>) -> Result<()> {
+        let run = &mut ctx.accounts.run;
+        require!(run.status == RunStatus::Live as u8, DungeonError::NotLive);
+        let clock = Clock::get()?;
+        require!(clock.unix_timestamp < run.ends_at, DungeonError::TimeUp);
+        run.slot_of_signer(&ctx.accounts.signer.key())?;
+        let slot = clock.slot;
+        if run.last_tick_slot != 0 && slot < run.last_tick_slot.saturating_add(MONSTER_TICK_SLOTS) {
+            return Ok(());
+        }
+        run.last_tick_slot = slot;
+        let run_key = run.key();
+        for mi in 0..MAX_MONSTERS {
+            let m = run.monsters[mi];
+            if !m.alive {
+                continue;
+            }
+            match run.monster_target(mi) {
+                Some((j, 1)) => {
+                    if m.last_attack_slot == 0 || slot >= m.last_attack_slot.saturating_add(MONSTER_ATTACK_SLOTS) {
+                        run.monsters[mi].last_attack_slot = slot;
+                        run.players[j].extract_start_slot = 0;
+                        run.players[j].hp = run.players[j].hp.saturating_sub(1);
+                        if run.players[j].hp == 0 {
+                            run.kill(j);
+                            let mut victim = load_bag(ctx.remaining_accounts, &run_key, j)?;
+                            victim.dropped = victim.dropped.saturating_add(victim.points);
+                            victim.points = 0;
+                            victim.exit(&crate::ID)?;
+                        }
+                    }
+                }
+                Some((j, _)) => {
+                    let goal = (run.players[j].x, run.players[j].y);
+                    run.monster_step(mi, goal);
+                }
+                None => run.monster_step(mi, (m.home_x, m.home_y)),
+            }
         }
         Ok(())
     }
@@ -315,6 +377,8 @@ pub mod extraction_dungeon {
 
     /// VRF callback. The tier goes into the opener's private Bag; the Run only learns "opened".
     /// Loot goes into the opener's bag, or their sack if they died while it was opening.
+    /// A mimic pays nothing and bites the opener for 1 damage (cancelling any extraction); if that
+    /// kills them, their bag drops as a sack like any other death, with no killer credited.
     pub fn callback_open_chest(
         ctx: Context<CallbackOpenChest>,
         randomness: [u8; 32],
@@ -331,6 +395,16 @@ pub mod extraction_dungeon {
         let pts = points_for_tier(tier);
         run.chests[c].state = ChestState::Opened as u8;
         bag.last_tier = tier;
+        if tier == TIER_MIMIC && run.players[i].alive {
+            run.players[i].extract_start_slot = 0;
+            run.players[i].hp = run.players[i].hp.saturating_sub(1);
+            if run.players[i].hp == 0 {
+                run.kill(i);
+                bag.dropped = bag.dropped.saturating_add(bag.points);
+                bag.points = 0;
+            }
+            return Ok(());
+        }
         if run.players[i].alive {
             bag.points = bag.points.saturating_add(pts);
         } else if run.dropped[i].present {

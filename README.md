@@ -17,7 +17,7 @@ and nobody can see what you're carrying.
 ![MagicBlock](https://img.shields.io/badge/MagicBlock-Ephemeral%20Rollups%20·%20Private%20ER%20(TEE)%20·%20VRF-9b7bff?style=flat-square)
 ![Solana](https://img.shields.io/badge/Solana-devnet-14F195?style=flat-square)
 ![Anchor](https://img.shields.io/badge/Anchor-1.1.2-f5c04a?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-18%20e2e%20·%208%20unit%20·%2013%20devnet-4ef0a0?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-25%20e2e%20·%209%20unit%20·%2014%20devnet-4ef0a0?style=flat-square)
 ![Blitz](https://img.shields.io/badge/Solana%20Blitz-v10%20·%20Entertainment%20Finance-ff3dc7?style=flat-square)
 
 </div>
@@ -58,13 +58,18 @@ link, or with **CPU** players. Press **Start game**.
 
 | | Rule |
 |---|---|
-| 🧰 **Chests** | Walk into one to open it. VRF rolls **common 1 pt** (60%), **rare 3 pts** (30%) or **legendary 8 pts** (10%), and only you see the result. |
-| 👑 **The Vault** | The glowing chest in the middle never rolls common (rare or legendary only). That's where the fights happen. |
+| 🧰 **Chests** | Walk into one to open it. VRF rolls **common 1 pt** (50%), **rare 3 pts** (30%) or **legendary 8 pts** (10%), and only you see the result. |
+| 🦷 **Mimics** | 10% of chests are **mimics**: no loot, and they **bite for 1 heart** and break your extraction. A mimic can kill you, and then your bag drops for everyone. |
+| 👑 **The Vault** | The glowing chest in the middle never rolls common or a mimic (rare or legendary only). That's where the fights happen. |
+| 👹 **Vault Guardians** | Two horned demons stand beside the Vault. They **chase anyone within 4 tiles of their post, bite** (1 heart, own cooldown) and walk home when you run. **3 hits kill one for a +2 bounty** into your private bag. They block tiles, so the Vault has to be earned. |
 | ⚔️ **Combat** | Walk into a player to hit them. **3 hits kill**, with a **0.4 s cooldown**, so spam-clicking doesn't win. |
 | 💀 **Sacks** | When you die, your whole bag drops as a sack marked **?**. Whoever walks over it takes everything, without knowing how much it is. |
 | 🔒 **Exits** | Exits unlock a **quarter of the way in**. Stand on one and **channel for 2 s** to extract; moving or getting hit cancels it. |
 | ⏱️ **Timer** | Still in the dungeon when time runs out? You lose your bag. |
 | 💰 **Payout** | Players who escaped split the pot **in proportion to their loot**. Claim it, then verify the payout on Solana Explorer. |
+
+**The announcer.** FIRST BLOOD, kills, GUARDIAN SLAIN, VAULT CRACKED, escapes, LAST ONE STANDING and HURRY UP flash
+across the screen as arcade banners, and a kill feed in the corner says who got whom (a player, a guardian or a mimic).
 
 **Controls.** PC: **WASD / arrows** to move, bump to hit or open, **E** to extract. Phone and tablet: on-screen **D-pad** and
 an **EXIT** button. A six-step **How to play** guide opens on the first visit.
@@ -211,7 +216,7 @@ flowchart LR
 
 ## 🎵 ARCADE CABINET
 
-CRT scanlines, neon pixel type (Press Start 2P / VT323), a **Player select** lobby with "insert coin" slots, loading bars
+An **attract mode** home page with real gameplay looping behind it, CRT scanlines, neon pixel type (Press Start 2P / VT323), a **Player select** lobby with "insert coin" slots, loading bars
 between chain hops, a results screen with a score tally, high-score table, **Claim winnings** coin shower and PAID stamp,
 and an original chiptune soundtrack, **Crypt Run**, generated in code with WebAudio. It speeds up in the last 30 seconds.
 Every sound effect is procedural too. The sprites were generated with Figma's AI image generation in one 16-bit style and
@@ -227,6 +232,8 @@ processed by `app/scripts/sprites.ts`.
   devnet: games created, played and finished, seats filled, unique hosts and wallets, SOL staked, paid out and refunded,
   escapes, kills, VRF chests opened, maps played, and recent games with Explorer links, plus live system checks
   (Solana RPC, program deployed, MagicBlock TEE rollup). No server: anyone can verify the numbers.
+- **🏆 Hall of fame**: a leaderboard of every wallet that has played, ranked by net SOL won, then escapes and kills, built
+  from the same on-chain accounts with the program's payout formula mirrored in the client.
 - **Vercel Web Analytics** for traffic (visitors, countries, devices).
 - **Google Analytics 4** gameplay funnel when `VITE_GA_ID` is set: `wallet_connected`, `game_created`, `game_joined`,
   `cpu_added`, `game_started`, `run_finished`, `payout_claimed`, `lobby_cancelled`, `device_selected`, `open_in_phantom`.
@@ -238,9 +245,9 @@ processed by `app/scripts/sprites.ts`.
 
 | Suite | Count | Covers |
 |---|---|---|
-| Unit (`cargo test -p extraction_dungeon --lib`) | **8** | Payout split, equal split for empty bags, refunds when nobody escapes, rounding dust to the best bag, tier tables, Vault tiers, every map fully connected |
-| End-to-end in MagicSVM (`tests-magicsvm`) | **18** | Stakes, seats and bags delegated at join · **opponents can't read each other's bags** · movement, walls, chests, session keys · chest tiers land only in the private bag · attack cooldown · death → sack → looted → extract → settle · bags can't be swapped · timer → refunds · split by loot · **host can't end a run early to grab the pot** · host and timeout lobby cancels · live runs can't be cancelled · loot + extract on every map · locked exits, channeling, interrupts |
-| Live devnet smoke test (`app/scripts/smoke.ts`) | **13** | On the real TEE rollup: owner-only bag reads, VRF chests, Vault tiers, locked exits, cooldown, hidden sack contents, channeling, and the exact payout |
+| Unit (`cargo test -p extraction_dungeon --lib`) | **9** | Mimic odds, payout split, equal split for empty bags, refunds when nobody escapes, rounding dust to the best bag, tier tables, Vault tiers, every map fully connected |
+| End-to-end in MagicSVM (`tests-magicsvm`) | **25** | Mimics bite, can kill and drop your bag; the Vault is never a mimic · **Vault Guardians** spawn beside the Vault and block it, chase and bite on a rate-limited tick, can kill (bag drops), and pay a private bounty when slain · Stakes, seats and bags delegated at join · **opponents can't read each other's bags** · movement, walls, chests, session keys · chest tiers land only in the private bag · attack cooldown · death → sack → looted → extract → settle · bags can't be swapped · timer → refunds · split by loot · **host can't end a run early to grab the pot** · host and timeout lobby cancels · live runs can't be cancelled · loot + extract on every map · locked exits, channeling, interrupts |
+| Live devnet smoke test (`app/scripts/smoke.ts`) | **14** | On the real TEE rollup: owner-only bag reads, VRF chests, a Vault Guardian slain in three hits, Vault tiers, locked exits, cooldown, hidden sack contents, channeling, and the exact payout |
 
 ---
 
@@ -275,7 +282,7 @@ depth, and how compellingly it showcases what's possible on Solana**. Submission
 | ✅ **Eligibility:** uses Ephemeral Rollups or VRF | Ephemeral Rollups **and** Private Ephemeral Rollups (TEE) **and** VRF, all carrying the gameplay |
 | ✅ **Theme:** Entertainment Finance | Real SOL stakes, a pot split by loot, refunds, verifiable payouts, in an arcade game |
 | ✅ **Creativity** | Hidden-information PvP: private bags in a TEE make bluffing and "is he worth robbing?" possible on-chain |
-| ✅ **Technical depth** | Delegation, ER-local permissions, VRF callbacks, commit + undelegate, session keys; 18 + 8 + 13 tests; real edge cases fixed and documented |
+| ✅ **Technical depth** | Delegation, ER-local permissions, VRF callbacks, commit + undelegate, session keys; 25 + 9 + 14 tests; real edge cases fixed and documented |
 | ✅ **Showcase** | Live on devnet, playable on PC and phone, solo with CPUs, public on-chain stats, Explorer-verified payouts |
 | ✅ **Working MVP** | Deployed program, live site, full loop verified on devnet |
 | ✅ **Public repo** | This repository |
@@ -294,8 +301,8 @@ Prereqs: Rust, Solana CLI 3.x, Anchor CLI 1.1.2, Node 22+.
 
 ```bash
 anchor build
-cargo +stable test -p extraction_dungeon --lib          # 8 unit tests
-cd tests-magicsvm && cargo +stable test                 # 18 end-to-end scenarios (MagicSVM)
+cargo +stable test -p extraction_dungeon --lib          # 9 unit tests
+cd tests-magicsvm && cargo +stable test                 # 25 end-to-end scenarios (MagicSVM)
 
 cd app && npm install
 NET=devnet npx tsx scripts/smoke.ts                     # live run on devnet-tee (needs devnet SOL in ~/.config/solana/id.json)

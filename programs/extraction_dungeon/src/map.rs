@@ -211,6 +211,10 @@ mod tests {
             for &(sx, sy) in SPAWNS.iter() {
                 assert!(walkable(sx, sy), "{name}: spawn ({sx},{sy}) not walkable");
             }
+            let (vx, vy) = m.chest(VAULT);
+            for gx in [vx - 1, vx + 1] {
+                assert!(walkable(gx, vy) && seen[vy as usize][gx as usize], "{name}: guardian tile ({gx},{vy}) not open");
+            }
         }
     }
 }

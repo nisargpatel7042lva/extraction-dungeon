@@ -38,6 +38,7 @@ type Row = {
     chests: number;
     wallets: string[];
     authority: string;
+    seats: { wallet: string; kills: number; extracted: boolean }[];
   };
 };
 
@@ -69,12 +70,79 @@ async function loadRuns(): Promise<Row[]> {
         chests: s.chests.filter((c) => c.state === 2).length,
         wallets: seated.map((p) => p.wallet.toBase58()),
         authority: s.authority.toBase58(),
+        seats: seated.map((p) => ({ wallet: p.wallet.toBase58(), kills: p.kills, extracted: p.extracted })),
       };
     } catch {
       /* pre-upgrade layout: prefix fields only */
     }
     return row;
   });
+}
+
+/** Every Bag account, keyed "run:seat" → points (bags are public once the run is over). */
+async function loadBagPoints(): Promise<Map<string, number>> {
+  const disc = (chain.program.idl.accounts as { name: string; discriminator: number[] }[]).find((a) => a.name.toLowerCase() === "bag")!.discriminator;
+  const accounts = await base.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(Uint8Array.from(disc)) } }] });
+  const out = new Map<string, number>();
+  for (const { account } of accounts) {
+    try {
+      const b = chain.decodeBag(account.data);
+      out.set(`${b.run.toBase58()}:${b.seat}`, b.points);
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
+
+/** Mirrors Run::payouts: escaped players split the pot by loot (equal if nobody looted);
+ *  if nobody escaped, every seat gets its stake back. Rounding dust is ignored here. */
+function payouts(pot: number, seats: { extracted: boolean }[], points: number[]): number[] {
+  const out = seats.map(() => 0);
+  const esc = seats.map((p, i) => ({ p, i })).filter(({ p }) => p.extracted);
+  if (!seats.length) return out;
+  if (!esc.length) return out.map(() => Math.floor(pot / seats.length));
+  const total = esc.reduce((a, { i }) => a + points[i], 0);
+  for (const { i } of esc) out[i] = total === 0 ? Math.floor(pot / esc.length) : Math.floor((pot * points[i]) / total);
+  return out;
+}
+
+type Player = { wallet: string; games: number; escapes: number; kills: number; won: number; staked: number; bestBag: number };
+
+async function leaderboard(runs: Row[]) {
+  const bags = await loadBagPoints();
+  const players = new Map<string, Player>();
+  for (const r of runs) {
+    if (!r.full || r.status !== 2 || !r.full.settled) continue; // finished and paid out
+    const pts = r.full.seats.map((_, i) => bags.get(`${r.key}:${i}`) ?? 0);
+    const shares = payouts(r.pot, r.full.seats, pts);
+    r.full.seats.forEach((s, i) => {
+      const p = players.get(s.wallet) ?? { wallet: s.wallet, games: 0, escapes: 0, kills: 0, won: 0, staked: 0, bestBag: 0 };
+      p.games += 1;
+      p.escapes += s.extracted ? 1 : 0;
+      p.kills += s.kills;
+      p.won += shares[i];
+      p.staked += r.entry;
+      if (s.extracted) p.bestBag = Math.max(p.bestBag, pts[i]);
+      players.set(s.wallet, p);
+    });
+  }
+  const top = [...players.values()].sort((a, b) => b.won - b.staked - (a.won - a.staked) || b.escapes - a.escapes || b.kills - a.kills).slice(0, 10);
+  const medal = (i: number) => ["🥇", "🥈", "🥉"][i] ?? `${i + 1}`;
+  $("leaders").innerHTML =
+    top
+      .map(
+        (p, i) => `<tr class="${i === 0 ? "win" : ""}">
+          <td><span class="rank r${i + 1}">${medal(i)}</span></td>
+          <td><a href="https://explorer.solana.com/address/${p.wallet}?cluster=devnet" target="_blank" rel="noopener">${p.wallet.slice(0, 4)}…${p.wallet.slice(-4)}</a></td>
+          <td class="r">${p.games}</td>
+          <td class="r">${p.escapes}</td>
+          <td class="r">${p.kills}</td>
+          <td class="r">${p.bestBag}</td>
+          <td class="r" style="color:${p.won - p.staked >= 0 ? "var(--green)" : "var(--red)"}">${p.won - p.staked >= 0 ? "+" : ""}${sol(p.won - p.staked)}</td>
+        </tr>`,
+      )
+      .join("") || `<tr><td colspan="7" class="muted">No finished games yet.</td></tr>`;
 }
 
 async function health() {
@@ -169,6 +237,7 @@ async function render() {
         </tr>`,
       )
       .join("") || `<tr><td colspan="7" class="muted">No games yet.</td></tr>`;
+  await leaderboard(runs).catch((e) => ($("leaders").innerHTML = `<tr><td colspan="7" class="muted">${esc(String((e as Error).message))}</td></tr>`));
   $("updated").textContent = `Read from the program's accounts on Solana devnet at ${new Date().toLocaleTimeString()}. ${runs.length - full.length} older games predate the latest account format and count only in the totals.`;
 }
 
