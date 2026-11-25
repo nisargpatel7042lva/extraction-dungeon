@@ -12,9 +12,10 @@ export const SEAT_COLORS = [0x5ab0ff, 0xff6ad5, 0xffa24a, 0xc9f24a];
 export const TIER_COLORS: Record<number, number> = { 1: 0x9aa0ad, 2: 0x5ab0ff, 3: 0xf5c04a };
 const UNKNOWN_TIER = 0x6b6280; // an opened chest someone else looted: you don't get to know what was in it
 const VAULT_GOLD = 0xf5c04a;
-// Never draw tiles smaller than this on screen; follow the player instead. Touch screens are held close,
-// so they go smaller: that fits the whole dungeon on a landscape phone.
-const MIN_TILE_PX = matchMedia("(pointer: coarse)").matches ? 26 : 36;
+// Never draw tiles smaller than this on screen; follow the player instead. Phones and tablets are held
+// close, so they go smaller: that fits the whole dungeon on a landscape phone. Follows the player's
+// device choice (body.touch), which can change at any time.
+const minTilePx = () => (document.body.classList.contains("touch") ? 26 : 36);
 
 const FLOOR_SPAN = TILE * 4; // one floor texture covers 4x4 tiles
 const WALL_SPAN = TILE * 2; // one wall texture covers 2x2 tiles
@@ -130,7 +131,7 @@ export class DungeonScene extends Phaser.Scene {
     const { width, height } = this.scale.gameSize;
     cam.setViewport(0, 0, width, height);
     const fit = Math.min(width / WORLD_W, height / WORLD_H);
-    if (fit * TILE >= MIN_TILE_PX) {
+    if (fit * TILE >= minTilePx()) {
       // No bounds in fit mode: bounds clamp the scroll so a map narrower than the screen hugs the
       // left edge. Without them, centerOn puts the dungeon in the middle of any aspect ratio.
       cam.removeBounds();
@@ -142,7 +143,7 @@ export class DungeonScene extends Phaser.Scene {
     } else {
       cam.setBounds(0, 0, WORLD_W, WORLD_H);
       // Fill the screen height (portrait phones) and scroll sideways with your knight.
-      cam.setZoom(Math.max(MIN_TILE_PX / TILE, height / WORLD_H));
+      cam.setZoom(Math.max(minTilePx() / TILE, height / WORLD_H));
       this.following = true;
       this.followMe();
     }
@@ -234,6 +235,17 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private drawMap() {
+    // Solid brick all around the dungeon, darker than its own walls, so wide screens show more
+    // dungeon instead of black bars beside the map.
+    const PAD = TILE * 40;
+    this.add
+      .tileSprite(-PAD, -PAD, WORLD_W + PAD * 2, WORLD_H + PAD * 2, "wall")
+      .setOrigin(0)
+      .setTileScale(WALL_SPAN / 256)
+      .setTilePosition(-PAD / (WALL_SPAN / 256), -PAD / (WALL_SPAN / 256))
+      .setTint(0x4a4560)
+      .setDepth(-2);
+    this.add.rectangle(WORLD_W / 2, WORLD_H / 2, WORLD_W + 8, WORLD_H + 8).setStrokeStyle(4, 0x000000, 0.55).setDepth(-1);
     // Seamless floor under everything, slightly brightened so sprites still pop.
     this.add.tileSprite(0, 0, WORLD_W, WORLD_H, "floor").setOrigin(0).setTileScale(FLOOR_SPAN / 256).setTint(0xd8d0ee);
 

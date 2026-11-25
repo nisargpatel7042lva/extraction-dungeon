@@ -44,8 +44,75 @@ const stage = $("stage");
 const hud = $("hud");
 const gameEl = $("game");
 
-const isTouch = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+// ---------- device: the player says how they're playing, and the layout follows ----------
+// Guessing from the browser gets it wrong too often (desktop-mode phone browsers, touch laptops,
+// small windows), so the first visit asks, and the 🎮 button changes it any time.
+type Device = "pc" | "phone" | "tablet";
+const DEVICES: Record<Device, { icon: string; label: string; blurb: string }> = {
+  pc: { icon: "🖥", label: "PC / Laptop", blurb: "Keyboard: WASD or arrows, E to extract" },
+  phone: { icon: "📱", label: "Phone", blurb: "Touch D-pad and an EXIT button, compact screen" },
+  tablet: { icon: "📲", label: "Tablet", blurb: "Touch controls with a roomier layout" },
+};
+const guessDevice = (): Device => {
+  const coarse = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+  if (!coarse) return "pc";
+  return Math.min(window.screen.width, window.screen.height) >= 600 ? "tablet" : "phone";
+};
+const savedDevice = (() => {
+  try {
+    const d = localStorage.getItem("ed:device");
+    return d && d in DEVICES ? (d as Device) : null;
+  } catch {
+    return null;
+  }
+})();
+let device: Device = savedDevice ?? guessDevice();
+let isTouch = device !== "pc";
+function applyDevice(d: Device) {
+  device = d;
+  isTouch = d !== "pc";
+  try {
+    localStorage.setItem("ed:device", d);
+  } catch {
+    /* ignore */
+  }
+  document.body.classList.toggle("touch", isTouch);
+  for (const k of Object.keys(DEVICES)) document.body.classList.toggle(`device-${k}`, k === d);
+  window.dispatchEvent(new Event("resize")); // re-fit the dungeon for the new layout
+  if (state?.status === Status.Live) renderHud();
+}
 document.body.classList.toggle("touch", isTouch);
+document.body.classList.add(`device-${device}`);
+
+/** "How are you playing?" Resolves once the player picks. */
+function askDevice(): Promise<void> {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById("device-pick") as HTMLDialogElement | null;
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.id = "device-pick";
+      document.body.appendChild(dlg);
+    }
+    const guess = guessDevice();
+    dlg.innerHTML = `
+      <h2>How are you playing?</h2>
+      <p class="muted">We'll fit the screen and controls to your device. Change it any time with the 🎮 button.</p>
+      <div class="device-opts">
+        ${(Object.keys(DEVICES) as Device[])
+          .map((k) => `<button class="device-opt ${k === device ? "on" : ""}" data-device="${k}"><span class="ico">${DEVICES[k].icon}</span><b>${DEVICES[k].label}</b><small>${DEVICES[k].blurb}${k === guess ? " · looks like this one" : ""}</small></button>`)
+          .join("")}
+      </div>`;
+    dlg.querySelectorAll<HTMLButtonElement>("[data-device]").forEach((b) =>
+      b.addEventListener("click", () => {
+        applyDevice(b.dataset.device as Device);
+        dlg!.close();
+        resolve();
+      }),
+    );
+    dlg.addEventListener("cancel", () => resolve(), { once: true }); // Esc keeps the current choice
+    dlg.showModal();
+  });
+}
 
 let wallet: WalletSigner | null = null;
 let runKey: PublicKey | null = params.get("run") ? new PublicKey(params.get("run")!) : null;
@@ -287,6 +354,7 @@ document.addEventListener("click", (e) => {
   const act = b.dataset.act;
   if (act === "mute") setMuted(!isMuted());
   else if (act === "music") music.setOn(!music.isOn());
+  else if (act === "device") void askDevice();
   else if (act === "fs") {
     if (document.fullscreenElement) {
       fsOptOut = true;
@@ -378,8 +446,9 @@ function showCreate() {
       const dur = Number(($("dur") as HTMLInputElement).value);
       ($("create") as HTMLButtonElement).disabled = true;
       try {
-        await needSol(10_000_000, "opening a game");
-        const { run } = await chain.createRun(wallet!, entry, dur);
+        await needSol(entry + 35_000_000, "opening a game (your stake + fees)");
+        // The host plays too: they take seat P1 in the same transaction that opens the run.
+        const { run } = await chain.createRun(wallet!, entry, dur, { seatHost: (r) => sessionKey(r).publicKey });
         const url = new URL(location.href);
         url.searchParams.set("run", run.toBase58());
         history.replaceState(null, "", url);
@@ -446,6 +515,20 @@ function apply(s: RunState, isEr: boolean) {
   if (s.status === Status.Cancelled) return void showCancelled();
 }
 
+/** Solana Explorer page for a base-layer transaction on this network. */
+function explorerTx(sig: string) {
+  const cluster = net === "devnet" ? "devnet" : `custom&customUrl=${encodeURIComponent(NETS[net].base)}`;
+  return `https://explorer.solana.com/tx/${sig}?cluster=${cluster}`;
+}
+
+/** Shows a "verify it yourself" link to the payout/refund transaction under the result. */
+function showProof(sig: string, what: "payout" | "refund") {
+  const box = document.getElementById("proof");
+  if (!box) return;
+  box.innerHTML = `<a href="${explorerTx(sig)}" target="_blank" rel="noopener">🔎 Verify the ${what} on Solana Explorer ↗</a>
+    <small class="mono">${sig.slice(0, 8)}…${sig.slice(-8)}</small>`;
+}
+
 /** A lobby that never started: every stake went back. */
 function showCancelled() {
   const s = state!;
@@ -458,8 +541,10 @@ function showCancelled() {
       <div class="go-title neon-red">CANCELLED</div>
       <div class="go-sub">This lobby never started</div>
       <p>${Number(s.entryLamports.toString()) > 0 ? `Every player got their <b class="neon-gold">${sol(s.entryLamports)} SOL</b> stake back.` : "It was a free run: nothing was staked."}</p>
+      <div id="proof" class="proof"></div>
       <div class="row" style="justify-content:center"><button id="again" class="big pink">▶ New game</button></div>
     </div>`;
+  if (Number(s.entryLamports.toString()) > 0) void chain.payoutSignature(runKey!).then((sig) => sig && showProof(sig, "refund"));
   $("again").addEventListener("click", newGame);
 }
 
@@ -545,7 +630,7 @@ function showLobby() {
     .map((i) => {
       const col = hexColor(SEAT_COLORS[i]);
       if (i >= s.playerCount)
-        return `<div class="slot empty"><span class="pn">P${i + 1}</span><small class="blink">INSERT<br/>COIN</small><span></span></div>`;
+        return `<div class="slot empty"><span class="pn">P${i + 1}</span><small class="blink">INSERT<br/>COIN</small><span class="nm" style="font-size:14px">${isHost ? "add a CPU or<br/>invite a friend" : ""}</span></div>`;
       const p = s.players[i];
       const bot = botAt(i);
       const name = i === me ? "YOU" : bot ? `CPU<br/>${LEVELS[bot.level].label}` : short(p.wallet);
@@ -730,13 +815,14 @@ function renderHud() {
       <button class="ghost small icon" data-act="mute" aria-label="Sound"></button>
       <button class="ghost small icon" data-act="music" aria-label="Music">♪</button>
       <button class="ghost small icon" data-act="fs" aria-label="Fullscreen"></button>
+      <button class="ghost small icon" data-act="device" aria-label="Change device">🎮</button>
     </div>
     <div class="hud-msg"><div class="hud-box">
       ${msg}
       ${canEnd ? `<button id="end" class="small">End run</button>` : ""}
-      ${!msg && !canEnd ? `<span class="keys"><kbd>WASD</kbd>/<kbd>arrows</kbd> move · bump to hit or open · <kbd>E</kbd> extract · <a href="#" data-guide>guide</a></span>` : ""}
+      ${!msg && !canEnd && actionsSent < 6 ? `<span class="keys"><kbd>WASD</kbd>/<kbd>arrows</kbd> move · bump to hit or open · <kbd>E</kbd> extract · <a href="#" data-guide>guide</a></span>` : ""}
     </div></div>`;
-  if (!msg && !canEnd && isTouch) (hud.querySelector(".hud-msg") as HTMLElement).style.display = "none";
+  if (!msg && !canEnd && (isTouch || actionsSent >= 6)) (hud.querySelector(".hud-msg") as HTMLElement).style.display = "none";
   $("end")?.addEventListener("click", () =>
     guarded("End", async () => {
       ($("end") as HTMLButtonElement).disabled = true;
@@ -869,6 +955,7 @@ async function showEnded() {
             : `<button id="settle" class="big ${iWon && myShare > 0 ? "gold-btn blink-btn" : "cyan"}">${iWon && myShare > 0 ? "💰 Claim winnings" : "Settle payouts"}</button>`
         }
       </div>
+      <div id="proof" class="proof"></div>
       <div class="row" style="justify-content:center">
         <button id="again" class="big pink">▶ Play again</button>
       </div>
@@ -895,13 +982,15 @@ async function showEnded() {
   if (iWon) sfx.win();
   else if (me >= 0) sfx.lose();
   if (s.settled && iWon && myShare > 0) coinRain(40);
+  if (s.settled) void chain.payoutSignature(runKey!).then((sig) => sig && showProof(sig, "payout"));
 
   $("settle")?.addEventListener("click", () =>
     guarded("Settle", async () => {
       const btn = $("settle") as HTMLButtonElement;
       btn.disabled = true;
       btn.textContent = "Paying out…";
-      await chain.settleRun(wallet!, runKey!, s);
+      const sig = await chain.settleRun(wallet!, runKey!, s);
+      showProof(sig, "payout");
       sfx.coin();
       if (iWon && myShare > 0) coinRain(60);
       btn.outerHTML = `<span class="stamp">PAID ✓</span>`;
@@ -1131,6 +1220,7 @@ $("touch-extract").addEventListener("pointerdown", (e) => {
   exitsIn,
 };
 
-initGuide();
+if (savedDevice) initGuide();
+else void askDevice().then(() => initGuide());
 renderWallet();
 showConnect();

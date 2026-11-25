@@ -74,6 +74,11 @@ export const SLOT_HASHES = new PublicKey("SysvarS1otHashes1111111111111111111111
 
 export const Dir = { Up: 0, Right: 1, Down: 2, Left: 3 } as const;
 export const Status = { Lobby: 0, Live: 1, Ended: 2, Cancelled: 3 } as const;
+/** Rollup blockhashes go stale within ~2 s: refresh in the background past this age... */
+const ER_HASH_REFRESH_MS = 400;
+/** ...and never sign with one older than this. */
+const ER_HASH_MAX_AGE_MS = 900;
+
 /** The run account was made by an older version of the program and can't be read any more. */
 export class OutdatedRunError extends Error {
   constructor() {
@@ -494,16 +499,18 @@ export class Chain {
   /** Called when a fire-and-forget ER action later turns out to have failed. */
   onActionError: ((err: string, signer: PublicKey) => void) | null = null;
 
-  /** ER blockhash, refreshed in the background so actions don't pay a round trip for it. */
-  private async erBlockhash() {
-    const stale = !this.erHash || Date.now() - this.erHash.at > 1000;
-    if (stale && !this.erHashFetch) {
+  /** ER blockhash, refreshed ahead of time so most actions don't pay a round trip for it.
+   *  Rollup slots are ~11 ms, so a blockhash expires within a couple of seconds: never hand out
+   *  one older than ER_HASH_MAX_AGE_MS (that caused "Blockhash not found" after any pause). */
+  private async erBlockhash(fresh = false) {
+    const age = this.erHash ? Date.now() - this.erHash.at : Infinity;
+    if ((fresh || age > ER_HASH_REFRESH_MS) && !this.erHashFetch) {
       this.erHashFetch = this.er()
         .then((c) => c.getLatestBlockhash())
         .then((h) => (this.erHash = { ...h, at: Date.now() }))
         .finally(() => (this.erHashFetch = null));
     }
-    if (!this.erHash) await this.erHashFetch;
+    if (fresh || age > ER_HASH_MAX_AGE_MS) await this.erHashFetch;
     return this.erHash!;
   }
 
@@ -515,13 +522,26 @@ export class Chain {
    *  runs in the background and failures are reported via `onActionError`. */
   private async sendEr(session: Keypair, ixs: TransactionInstruction[], confirm = true) {
     const conn = await this.er(session);
-    const nonce = ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 + (this.erNonce++ % 50_000) });
-    const { blockhash, lastValidBlockHeight } = await this.erBlockhash();
-    const tx = new Transaction().add(nonce, ...ixs);
-    tx.feePayer = session.publicKey;
-    tx.recentBlockhash = blockhash;
-    tx.sign(session);
-    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+    const build = async (fresh: boolean) => {
+      const nonce = ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 + (this.erNonce++ % 50_000) });
+      const hash = await this.erBlockhash(fresh);
+      const tx = new Transaction().add(nonce, ...ixs);
+      tx.feePayer = session.publicKey;
+      tx.recentBlockhash = hash.blockhash;
+      tx.sign(session);
+      return { tx, ...hash };
+    };
+    let built = await build(false);
+    let sig: string;
+    try {
+      sig = await conn.sendRawTransaction(built.tx.serialize(), { skipPreflight: true });
+    } catch (e) {
+      // The rollup moved past our blockhash between fetching it and sending: once more, fresh.
+      if (!/blockhash not found/i.test((e as Error)?.message ?? "")) throw e;
+      built = await build(true);
+      sig = await conn.sendRawTransaction(built.tx.serialize(), { skipPreflight: true });
+    }
+    const { blockhash, lastValidBlockHeight } = built;
     const confirmed = conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "processed").then((r) => {
       if (r.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(r.value.err)}`);
     });
@@ -546,14 +566,40 @@ export class Chain {
   // ---------- base layer ----------
 
   /** Opens a run on `layout`, or on a random map when omitted. */
-  async createRun(wallet: WalletSigner, entryLamports: number, durationSecs: number, layout = Math.floor(Math.random() * MAPS.length)) {
+  /** Opens a run on `layout` (random when omitted). With `seatHost`, the host also takes seat P1 in
+   *  the same transaction (create + join + delegate their private bag: one wallet approval);
+   *  `seatHost(run)` returns the session key to register for that run. */
+  async createRun(
+    wallet: WalletSigner,
+    entryLamports: number,
+    durationSecs: number,
+    opts: { layout?: number; seatHost?: (run: PublicKey) => PublicKey } = {},
+  ) {
+    const layout = opts.layout ?? Math.floor(Math.random() * MAPS.length);
     const runId = new BN(Date.now());
     const run = runPda(wallet.publicKey, runId);
-    const ix = await this.program.methods
-      .createRun(runId, new BN(entryLamports), durationSecs, layout)
-      .accountsPartial({ authority: wallet.publicKey, run, vault: vaultPda(run) })
-      .instruction();
-    await this.sendBase(wallet, [ix]);
+    const ixs = [
+      await this.program.methods
+        .createRun(runId, new BN(entryLamports), durationSecs, layout)
+        .accountsPartial({ authority: wallet.publicKey, run, vault: vaultPda(run) })
+        .instruction(),
+    ];
+    if (opts.seatHost) {
+      const session = opts.seatHost(run);
+      const bag = bagPda(run, 0);
+      ixs.push(
+        await this.program.methods
+          .joinRun(session)
+          .accountsPartial({ player: wallet.publicKey, run, vault: vaultPda(run), session, bag })
+          .instruction(),
+        await this.program.methods
+          .delegateBag(0)
+          .accountsPartial({ payer: wallet.publicKey, run, bag })
+          .remainingAccounts([{ pubkey: this.net.validator, isSigner: false, isWritable: false }])
+          .instruction(),
+      );
+    }
+    await this.sendBase(wallet, ixs);
     return { run, runId };
   }
 
@@ -636,6 +682,13 @@ export class Chain {
       .remainingAccounts([...wallets, ...this.bagMetas(run, state.playerCount, false)])
       .instruction();
     return this.sendBase(wallet, [ix]);
+  }
+
+  /** The transaction that paid out (settle) or refunded (cancel) a run: the vault's latest
+   *  successful one. Null if the vault hasn't paid anything yet or the lookup fails. */
+  async payoutSignature(run: PublicKey): Promise<string | null> {
+    const sigs = await this.base.getSignaturesForAddress(vaultPda(run), { limit: 5 }).catch(() => []);
+    return sigs.find((s) => !s.err)?.signature ?? null;
   }
 
   /** Cancels a lobby that never started and refunds every seated wallet its stake. */
