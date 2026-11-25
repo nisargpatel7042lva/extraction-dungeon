@@ -67,16 +67,18 @@ information (you never know whether that player is worth killing), and a payout 
 **Proof it's live**
 A public stats page (`/stats`) reads every game straight from the program's accounts on devnet: games created,
 played and finished, seats filled, unique wallets, SOL staked, paid out and refunded, escapes, kills, VRF chests
-opened, maps played and recent games with Explorer links, plus live system checks (devnet RPC, program deployed,
+opened, maps played, a hall of fame leaderboard and recent games with Explorer links, plus live system checks (devnet RPC, program deployed,
 MagicBlock TEE rollup). No server and no analytics service: anyone can verify the numbers.
 
 **What's tested**
-- 8 unit tests: payout math (proportional split, equal split, refunds when nobody escapes, dust to the best bag), tier
+- 9 unit tests: mimic odds, payout math (proportional split, equal split, refunds when nobody escapes, dust to the best bag), tier
   tables, and every map being fully connected.
-- 18 end-to-end scenarios in MagicSVM (base layer + ER + VRF + permission program), including "opponents can't read each
+- 25 end-to-end scenarios in MagicSVM (base layer + ER + VRF + permission program), including "opponents can't read each
   other's bags", "the host can't end a run early to grab the pot", lobby cancel refunds, the attack cooldown, locked
-  exits, channeled extraction, and a loot-and-extract run on every map.
-- A devnet smoke test on the TEE with 13 checks: owner-only bag reads (an opponent is refused), VRF on the TEE, the Vault
+  exits, channeled extraction, a loot-and-extract run on every map, mimics that bite and can kill, and Vault
+  Guardians that block the Vault, chase, bite on a rate-limited tick, and pay a private bounty when slain.
+- A devnet smoke test on the TEE with 14 checks: owner-only bag reads (an opponent is refused), VRF on the TEE, a Vault
+  Guardian slain in three hits, the Vault
   tier table, locked exits, the cooldown, hidden sack contents, channeling, and the exact payout.
 
 **Found along the way (feedback for the MagicBlock team)**
