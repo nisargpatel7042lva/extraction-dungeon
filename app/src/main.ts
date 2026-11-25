@@ -111,6 +111,7 @@ function who(seat: number, wallet0: PublicKey) {
 }
 
 async function addBot(level: BotLevel) {
+  await needSol(Number(state!.entryLamports.toString()) + 22_000_000, "adding a CPU (its stake + fees)");
   const wallet0 = Keypair.generate();
   const session0 = Keypair.generate();
   const seat = await chain.joinBot(wallet!, runKey!, wallet0, session0.publicKey);
@@ -176,7 +177,7 @@ function toast(msg: string, err = false) {
   t.className = err ? "err" : "";
   t.hidden = false;
   clearTimeout((toast as any).h);
-  (toast as any).h = setTimeout(() => (t.hidden = true), err ? 5000 : 2500);
+  (toast as any).h = setTimeout(() => (t.hidden = true), err ? Math.max(5000, msg.length * 45) : 2500);
 }
 
 function friendly(e: unknown): string {
@@ -189,7 +190,22 @@ function friendly(e: unknown): string {
     if (err) return err.msg ?? err.name;
   }
   if (/429|rate limit/i.test(m)) return "The network is busy, try again in a moment.";
+  // Rejected before the program ran (no logs), or a plain lamports shortfall: almost always an
+  // empty wallet on this network.
+  if (/insufficient lamports|debit an account|insufficient funds/i.test(m) || (/Simulation failed/i.test(m) && /Logs:\s*\[\]/.test(m)))
+    return `Your wallet doesn't have enough ${net} SOL for this. ${FAUCET_HINT}`;
+  if (m.includes(FAUCET_HINT)) return m; // our own funding message: show all of it
   return m.length > 160 ? m.slice(0, 160) + "…" : m;
+}
+
+const FAUCET_HINT = "Get free devnet SOL at faucet.solana.com (in Phantom: Settings → Developer Settings → Testnet Mode, then Solana Devnet).";
+
+/** Fails early, with a clear message, when the wallet can't cover what it's about to pay. */
+async function needSol(lamports: number, what: string) {
+  if (!wallet) return;
+  const bal = await chain.base.getBalance(wallet.publicKey).catch(() => null);
+  if (bal === null || bal >= lamports) return;
+  throw new Error(`Your wallet has ${sol(bal)} ${net} SOL; ${what} needs about ${sol(lamports)}. ${FAUCET_HINT}`);
 }
 
 async function guarded(label: string, f: () => Promise<unknown>) {
@@ -362,6 +378,7 @@ function showCreate() {
       const dur = Number(($("dur") as HTMLInputElement).value);
       ($("create") as HTMLButtonElement).disabled = true;
       try {
+        await needSol(10_000_000, "opening a game");
         const { run } = await chain.createRun(wallet!, entry, dur);
         const url = new URL(location.href);
         url.searchParams.set("run", run.toBase58());
@@ -597,6 +614,7 @@ function showLobby() {
   $("join")?.addEventListener("click", () =>
     guarded("Join", async () => {
       ($("join") as HTMLButtonElement).disabled = true;
+      await needSol(Number(s.entryLamports.toString()) + 30_000_000, "joining (stake + fees)");
       const seat = await chain.joinRun(wallet!, runKey!, session!.publicKey);
       toast("Joined. Making your bag private…");
       await protectBag(seat);
