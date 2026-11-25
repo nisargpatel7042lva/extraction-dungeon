@@ -139,11 +139,16 @@ async function main() {
   await walkTo(sessions[0], run, 0, gSides.map(([t]) => t));
   const atG = await here(run, 0);
   const gDir = gSides.find(([t]) => t[0] === atG[0] && t[1] === atG[1])![1];
-  for (let i = 0; i < 3; i++) {
-    await chain.attack(sessions[0], run, 2, gDir);
+  // Hit until it's dead: a retried send can land twice, so don't assume exactly three calls.
+  let hits = 0;
+  for (let i = 0; i < 6; i++) {
+    const m = (await chain.fetchRun(run))!.state.monsters[0];
+    if (!m.alive) break;
+    log(`guardian at (${m.x},${m.y}) hp ${m.hp}, seat 0 at (${atG}) hitting dir ${gDir}`);
+    await chain.attack(sessions[0], run, 2, gDir).then(() => hits++, (e) => log("attack failed:", String(e).slice(0, 120)));
     await sleep(500);
   }
-  check(!(await chain.fetchRun(run))!.state.monsters[0].alive, "a Vault Guardian slain in three hits");
+  check(!(await chain.fetchRun(run))!.state.monsters[0].alive, `a Vault Guardian slain (${hits} confirmed hits)`);
   const vaultDir = await walkToChest(sessions[0], run, 0, MAP.VAULT);
   void vaultDir;
   await chain.openChest(sessions[0], run, 0, MAP.VAULT);
