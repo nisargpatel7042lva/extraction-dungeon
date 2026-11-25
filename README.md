@@ -1,42 +1,143 @@
-# Extraction Dungeon
+<div align="center">
 
-**Stake SOL, loot the dungeon, fight other players, and get out alive. Whatever you extract with is yours.**
+<img src="docs/media/banner.jpg" alt="Extraction Dungeon" width="100%" />
 
-A real-time, staked PvP extraction game on Solana for MagicBlock **Solana Blitz v10** (Entertainment Finance).
-Every step, hit and chest happens on a **MagicBlock Private Ephemeral Rollup** (TEE): no fees, no wallet popups, and
-**nobody can see what you're carrying**. **MagicBlock VRF** decides what's inside each chest, and the pot settles back on
-Solana when the run ends.
+# ▶ EXTRACTION DUNGEON
 
-- **Play:** https://extraction-dungeon-three.vercel.app
-- **Live stats (on-chain):** https://extraction-dungeon-three.vercel.app/stats: games, players, SOL staked and paid out, read from the program's accounts, plus live system checks (devnet: Phantom in testnet mode + [faucet SOL](https://faucet.solana.com)). The **How to play** button explains everything in six steps.
-- **Program (devnet):** [`2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet)
-- **Rollup:** `devnet-tee.magicblock.app` (TEE validator `MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo`)
+**Stake SOL. Loot the dungeon. Fight. Get out alive.**<br/>
+A real-time, staked PvP extraction game where every move is a Solana transaction,<br/>
+and nobody can see what you're carrying.
 
-## How a run works
+<img src="app/public/sprites/hero0.png" width="56" /> <img src="app/public/sprites/hero1.png" width="56" /> <img src="app/public/sprites/chest_closed.png" width="56" /> <img src="app/public/sprites/sack.png" width="48" /> <img src="app/public/sprites/exit.png" width="52" /> <img src="app/public/sprites/hero2.png" width="56" /> <img src="app/public/sprites/hero3.png" width="56" />
 
-1. **Lobby (Solana).** A host opens a run with an entry stake and a timer, on one of **five dungeon layouts**
-   (Crossroads, Pillars, Rooms, Serpent, Ring) picked at random, so no two rounds play the same. Up to 4 players join. Each stake goes into a
-   program-owned **vault that never leaves the base layer**. Each player registers a browser **session key** and gets a
-   **private Bag** account, delegated to the TEE rollup in the same transaction.
-2. **Private by default.** Each player's session key creates a permission on the rollup so **only it can read that Bag**.
-   The shared `Run` (positions, HP, which chests are open) gets a public permission.
-3. **Play (Private Ephemeral Rollup).** Arrow keys move one tile per step. Walk into a player to hit them (3 hits kill,
-   **0.4 s attack cooldown**). Walk into a chest to open it, and **VRF rolls the tier** into your private bag: common 1 pt
-   (60%), rare 3 pts (30%), legendary 8 pts (10%). **Only you learn what you got.** Opponents just see the chest open.
-   When you die, your whole bag drops as a **sack** marked "?". Anyone can walk over it and take everything inside without
-   knowing how much it is. Stand on an **EXIT** and press **E** to leave with your bag.
-4. **Back to Solana.** When the timer runs out, or everyone is dead or out, the run **and every bag** are committed and
-   undelegated. The bags are now public, so everyone sees what everyone had.
-5. **Settle.** Players who extracted split the pot **in proportion to their loot points**. Anyone trapped or slain gets nothing.
-   If nobody makes it out, every stake is refunded. The host never takes a cut, and nobody (host included) can
-   end a run before the timer runs out or every player is out or dead.
-6. **Lobbies can't trap stakes.** The host can cancel a lobby that hasn't started and refund every stake
-   (`cancel_run`); if the host walks away, anyone can do it after 10 minutes.
+[![Play](https://img.shields.io/badge/%E2%96%B6%20PLAY-devnet-ff3dc7?style=for-the-badge)](https://extraction-dungeon-three.vercel.app)
+[![Live stats](https://img.shields.io/badge/LIVE%20STATS-on--chain-3df2ff?style=for-the-badge)](https://extraction-dungeon-three.vercel.app/stats)
+[![Program](https://img.shields.io/badge/PROGRAM-2c1W2M…BBqw-ffd23d?style=for-the-badge)](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet)
 
-The tension is the whole game: every second you stay, there's more loot and more chance someone takes your bag. And you
-never know whether the player walking at you is carrying 1 point or 20.
+![MagicBlock](https://img.shields.io/badge/MagicBlock-Ephemeral%20Rollups%20·%20Private%20ER%20(TEE)%20·%20VRF-9b7bff?style=flat-square)
+![Solana](https://img.shields.io/badge/Solana-devnet-14F195?style=flat-square)
+![Anchor](https://img.shields.io/badge/Anchor-1.1.2-f5c04a?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-18%20e2e%20·%208%20unit%20·%2013%20devnet-4ef0a0?style=flat-square)
+![Blitz](https://img.shields.io/badge/Solana%20Blitz-v10%20·%20Entertainment%20Finance-ff3dc7?style=flat-square)
 
-## Architecture
+</div>
+
+---
+
+## 🕹️ INSERT COIN
+
+Extraction Dungeon is our entry for **MagicBlock Solana Blitz v10 (Entertainment Finance)**, built from MagicBlock's
+"Extraction dungeon" idea and dressed as an arcade cabinet.
+
+- **Real stakes.** 1 to 4 players stake SOL into a program vault that never leaves Solana.
+- **Real time.** The run moves onto a **MagicBlock Private Ephemeral Rollup**: every step, hit and chest is an on-chain
+  transaction, signed by a browser session key. No fees, no wallet popups, millisecond confirmations.
+- **Hidden information.** Your loot lives in a **private bag** that only your session key can read, inside a TEE.
+  Opponents see a chest open and a "?" over you. Nobody knows who's worth robbing.
+- **Provable loot.** **MagicBlock VRF** rolls every chest inside the rollup.
+- **Real payouts.** When the run ends, everything commits back to Solana, the bags are revealed, and the program pays the
+  players who escaped, split by loot. Verify it on Solana Explorer.
+
+| | |
+|---|---|
+| ▶ **Play** | https://extraction-dungeon-three.vercel.app (devnet: Phantom in testnet mode + [free devnet SOL](https://faucet.solana.com)) |
+| 📊 **Live stats** | https://extraction-dungeon-three.vercel.app/stats: every game, read straight from the chain |
+| 📼 **Demo video** | 2:54, with gameplay and voice-over (link added after upload) |
+| 🔗 **Program** | [`2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet) (devnet) |
+| 🔒 **Rollup** | `devnet-tee.magicblock.app` (TEE validator `MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo`) |
+
+<div align="center"><img src="docs/media/gameplay.jpg" alt="Gameplay" width="100%" /></div>
+
+---
+
+## 🎮 HOW TO PLAY
+
+**Get in.** Press **Create game**, pick a stake (FREE, 0.01, 0.05 or 0.1 SOL) and a timer (2, 3 or 5 minutes). One wallet
+approval creates the run, seats you as **P1** and sets up your private bag. Fill the other seats by sharing the invite
+link, or with **CPU** players. Press **Start game**.
+
+| | Rule |
+|---|---|
+| 🧰 **Chests** | Walk into one to open it. VRF rolls **common 1 pt** (60%), **rare 3 pts** (30%) or **legendary 8 pts** (10%), and only you see the result. |
+| 👑 **The Vault** | The glowing chest in the middle never rolls common (rare or legendary only). That's where the fights happen. |
+| ⚔️ **Combat** | Walk into a player to hit them. **3 hits kill**, with a **0.4 s cooldown**, so spam-clicking doesn't win. |
+| 💀 **Sacks** | When you die, your whole bag drops as a sack marked **?**. Whoever walks over it takes everything, without knowing how much it is. |
+| 🔒 **Exits** | Exits unlock a **quarter of the way in**. Stand on one and **channel for 2 s** to extract; moving or getting hit cancels it. |
+| ⏱️ **Timer** | Still in the dungeon when time runs out? You lose your bag. |
+| 💰 **Payout** | Players who escaped split the pot **in proportion to their loot**. Claim it, then verify the payout on Solana Explorer. |
+
+**Controls.** PC: **WASD / arrows** to move, bump to hit or open, **E** to extract. Phone and tablet: on-screen **D-pad** and
+an **EXIT** button. A six-step **How to play** guide opens on the first visit.
+
+---
+
+## 🗺️ FIVE DUNGEONS
+
+Every run is played on one of five mirror-symmetric 20×13 layouts, picked at random, so no two rounds feel the same. Each
+has ten chests, the Vault, four exits and four corner spawns, and a test checks that every tile is reachable on every map.
+
+| CROSSROADS | PILLARS | ROOMS | SERPENT | RING |
+|---|---|---|---|---|
+| Classic corridors | Open hall of pillars | Four walled rooms | Winding lanes | An outer ring around the Vault |
+
+---
+
+## 🤖 CPU PLAYERS
+
+No one around? Add **Easy, Medium or Hard** CPUs in the lobby. A CPU is a **real on-chain player**: your wallet funds a fresh
+CPU wallet and it joins in the same transaction (one approval), so it stakes, has its own private bag, and can be killed and
+looted. Its brain runs in your tab and acts through its own session key. After the payout, everything it won comes back to you.
+
+| Level | Plays like |
+|---|---|
+| Easy | Slow (~1 action/s), wanders, rarely fights, leaves early with little loot |
+| Medium | Loots steadily, fights back, grabs sacks, extracts with ~8 pts or a third of the run left |
+| Hard | Fast (~4 actions/s), hunts players in range, raids the Vault, ambushes anyone channeling at an exit, holds out for ~14 pts |
+
+Set the stake to **FREE** for a practice run.
+
+---
+
+## 🔐 PRIVATE BY DESIGN
+
+<div align="center"><img src="docs/media/privacy.jpg" alt="Your bag is private" width="100%" /></div>
+
+| Public on the rollup | Private (owner's session key only) | Public after the run |
+|---|---|---|
+| Positions, HP, kills, who extracted | Your loot points | Every bag's points |
+| Which chests are open, and who opened them | What tier your chest rolled | (the payout uses them) |
+| Where a sack lies | What's inside a sack | |
+
+---
+
+## 💰 YOUR STAKE IS SAFE
+
+The program enforces these, not a server:
+
+- 🛑 **No early endings.** Nobody, not even the host, can end a run before the timer runs out or every player is out or dead.
+- 🚫 **No host cut.** The whole pot goes to players.
+- ↩️ **Nobody escapes = refund.** Every stake goes back.
+- ✖ **Abandoned lobby = refund.** The host can cancel a lobby that never started; if the host walks away, anyone can cancel
+  it after 10 minutes. Every stake is refunded.
+- 🔎 **Verifiable.** The results screen links the payout or refund transaction on Solana Explorer.
+
+<div align="center"><img src="docs/media/payout.jpg" alt="Claim winnings" width="100%" /></div>
+
+---
+
+## ⚡ MAGICBLOCK INSIDE
+
+| Feature | Where | How |
+|---|---|---|
+| **Private Ephemeral Rollup (TEE)** | `delegate_run`, `delegate_bag`, `init_bag_permission`, `init_run_permission` | The run and one Bag PDA per seat are delegated to the TEE validator. Each seat's session key creates an ER-local permission (`CreateEphemeralPermissionCpi`, `is_private: true`, members = itself), so only it can read its bag; the run gets a public one. Clients authenticate with `getAuthToken`, signed locally by the session key. |
+| **Ephemeral Rollups** | `move_player`, `attack`, `start_extract`, `extract` | All gameplay runs on the rollup. Moves are fire-and-forget with client-side prediction, so your knight moves instantly. |
+| **Commit + undelegate** | `end_run` (`#[commit]`, `MagicIntentBundleBuilder::commit_and_undelegate`) | Commits the run and every bag back to Solana in one intent. |
+| **VRF** | `open_chest` (`#[vrf]`, `create_request_randomness_ix_const`) → `callback_open_chest` (`#[vrf_callback]`) | Randomness from the ephemeral queue, inside the PER. The callback (gated by the program's scoped VRF identity) writes the tier into the opener's **private** bag, about 0.7 s after opening. |
+| **Session keys** | `join_run(session_signer)` | A per-run browser keypair registered at join; every rollup action is checked against it, and its leftover SOL is swept back after the run. |
+
+`ephemeral-rollups-sdk 0.18` (`anchor`, `vrf`, `access-control`) · `anchor-lang 1.1.2` · `@magicblock-labs/ephemeral-rollups-sdk 0.18.0`
+
+### Architecture
 
 ```mermaid
 flowchart LR
@@ -59,9 +160,9 @@ flowchart LR
     VRF[VRF oracle<br/>ephemeral queue]
   end
 
-  W -- "create / join (stake) / start" --> R0
-  W -- "join: stake" --> V
-  W -- "join: create + delegate bag" --> B0 --> DP --> B1
+  W -- "create + join as P1 (one tx)" --> R0
+  W -- "stake" --> V
+  W -- "create + delegate bag" --> B0 --> DP --> B1
   R0 -- "start_run + delegate_run" --> DP --> R1
   S -- "init_bag_permission (members = me)" --> B1
   S -- "move / attack / open_chest / extract<br/>no fees, no popups" --> R1
@@ -71,128 +172,173 @@ flowchart LR
   B1 -- "ws updates (my bag only)" --> UI
   R1 -- "end_run: commit + undelegate run + bags" --> R0
   W -- "settle_run (reads bags)" --> V
-  V -- "payouts by loot points" --> W
+  V -- "payouts by loot, or refunds" --> W
 
-  classDef w fill:#f5c04a,color:#1a1408
+  classDef w fill:#ffd23d,color:#1a1408
   classDef s fill:#9b7bff,color:#fff
   classDef p fill:#3a2f5c,color:#fff
 ```
 
-### MagicBlock integration
-| Piece | Where | Notes |
-|---|---|---|
-| **Private Ephemeral Rollup** | `delegate_run` / `delegate_bag` → TEE validator; `init_bag_permission` (`CreateEphemeralPermissionCpi`, `is_private: true`, members = the seat's session key); `init_run_permission` (public) | Each Bag PDA is pre-funded at join with the permission's rent and pays for it on the rollup. Clients authenticate with `getAuthToken`, signed locally by the session key |
-| Commit + undelegate | `end_run` (`#[commit]`, `MagicIntentBundleBuilder::commit_and_undelegate`) | Commits the run and every bag in one intent. Anyone can end it once the timer is up or everyone is resolved |
-| **VRF** inside the PER | `open_chest` (`#[vrf]`, `create_request_randomness_ix_const`) → `callback_open_chest` (`#[vrf_callback]`) | Uses `DEFAULT_EPHEMERAL_QUEUE`. The callback writes the tier and loot into the opener's **private** bag (~0.7 s on devnet-tee) |
-| Session keys | `join_run(session_signer)` | A browser keypair stored in the `Run`; every rollup action is checked against it |
-| Attack cooldown | `attack` | `ATTACK_COOLDOWN_SLOTS = 36` (~400 ms at ~11 ms rollup slots), tracked per player as `last_attack_slot` |
+### Lifecycle of a run
 
-`ephemeral-rollups-sdk = 0.18` (`anchor`, `vrf`, `access-control`), `anchor-lang = 1.1.2`, `@magicblock-labs/ephemeral-rollups-sdk 0.18.0`.
+1. **Lobby (Solana).** `create_run` + `join_run` + `delegate_bag` in one transaction: the host's stake goes into the vault,
+   their session key is registered, and their private bag is delegated to the TEE. Others join the same way.
+2. **Start.** `start_run` + `delegate_run` hand the run to the rollup; each seat creates its bag's private permission.
+3. **Play (rollup).** Moves, attacks, VRF chests and extractions, all signed by session keys.
+4. **End.** `end_run` commits and undelegates the run and every bag in one intent (anyone can call it, once allowed).
+5. **Settle (Solana).** `settle_run` pays escaped players by loot, or refunds everyone if nobody escaped.
+   `cancel_run` refunds a lobby that never started.
 
-### What stays private, and what doesn't
-| Public on the rollup | Private (only the owner) | Public after the run |
-|---|---|---|
-| Positions, HP, kills, who extracted | Your loot points | Every bag's points |
-| Which chests are open, and who opened them | What tier your chest rolled | (settle pays by them) |
-| Where a sack lies | What's inside a sack | |
+### Real-time feel
 
-### Things we learned the hard way (maybe useful to MagicBlock and other builders)
-- **`#[vrf_callback]` in SDK 0.18 burns the whole 200k CU budget.** The injected `vrf_program_identity` constraint evaluates
-  `scoped_vrf_identity_const(&crate::ID)` at runtime (a software PDA derivation). Workaround: declare the field yourself
-  with `#[account(address = CONST)]` where `CONST` is a `const` item, which forces compile-time evaluation
-  ([lib.rs](programs/extraction_dungeon/src/lib.rs)).
-- **Ephemeral permission accounts hold no lamports** (their rent sits in the ephemeral vault), so the usual
-  `permission.lamports() > 0` "already exists" check is always false. Check `!permission.data_is_empty()` instead.
-- **Identical rollup transactions inside one blockhash get dropped** ("already processed"): two `move(Down)` in a row are
-  the same bytes. We add a rotating `ComputeBudget` instruction so every action is unique.
-- **Anchor pins.** `anchor-lang = "=1.0.2"` pulls 1.2.2 macro crates, which emit `create_account_allow_prefund`. Pin
-  everything to one version (`cargo update -p anchor-* --precise 1.1.2`).
-- **Local stack.** With `ephemeral-validator 1.1.1` locally, commits back to base fail (`failed to deserialize
-  VersionedTransaction: failed to fill whole buffer`), and there's no oracle on the ephemeral queue. Devnet works.
-
-## Real-time feel
 | | |
 |---|---|
-| Rollup RTT from the dev machine | devnet-tee 111 ms · devnet-as 75 ms (slots ~11 ms on both) |
-| Input-queue block per action | ~80 ms (cached blockhash, fire-and-forget, `processed` confirmation in the background) |
-| On screen | Your own moves are predicted instantly; chain state wins after 1.5 s if it disagrees |
+| Rollup slots | ~11 ms |
+| Round trip from the dev machine | devnet-tee ~111 ms, devnet-as ~75 ms |
+| On screen | Your moves are predicted instantly; chain state wins after 1.5 s if it disagrees |
 | VRF chest | ~0.7 s from open to tier in your bag |
 
-## Arcade look
+---
 
-The site is styled as an arcade cabinet: CRT scanlines, neon pixel type (Press Start 2P / VT323), chunky
-buttons with procedural WebAudio blips, a **Player select** lobby (P1-P4, "insert coin" empty slots, CPU
-players), loading bars between chain hops, and a results screen with a score tally, a high-score table,
-**Claim winnings** with a coin shower and a PAID stamp, and **Play again**. The dungeon canvas fills
-any screen size and is centered; phones get a D-pad and an EXIT button.
+## 📱 EVERY SCREEN, EVERY WALLET
 
-## Playing solo: AI bots
-No one to play with? The host can add **Easy, Medium or Hard** bots from the lobby
-(`app/src/bot.ts`). A bot is a real seated player: the host's wallet funds a fresh bot wallet and the bot
-joins on-chain in the same transaction (one approval), so it stakes, has its own private bag, and can be
-killed and looted. Its brain runs in the host's tab, reading the public run state and acting through its
-own session key on the rollup. After settle, the bots' wallets and session keys are swept back to the host.
+- **Pick your device.** The first visit asks **PC / Phone / Tablet**, and the layout follows (change it any time with 🎮).
+- **Phones.** Portrait puts the dungeon above a control deck; landscape fits the whole dungeon with the D-pad and EXIT on
+  the sides. Choosing Phone or Tablet suggests turning the device sideways.
+- **Wallets.** Phantom on desktop. On phones, **Open in Phantom** reopens the game (invite link included) inside Phantom's
+  browser, where connecting works. Clear messages if a wallet has no devnet SOL.
+- **Fullscreen** on the first tap, click or key (with a toggle), and a web app manifest for home-screen installs.
 
-| Level | Plays like |
+## 🎵 ARCADE CABINET
+
+CRT scanlines, neon pixel type (Press Start 2P / VT323), a **Player select** lobby with "insert coin" slots, loading bars
+between chain hops, a results screen with a score tally, high-score table, **Claim winnings** coin shower and PAID stamp,
+and an original chiptune soundtrack, **Crypt Run**, generated in code with WebAudio. It speeds up in the last 30 seconds.
+Every sound effect is procedural too. The sprites were generated with Figma's AI image generation in one 16-bit style and
+processed by `app/scripts/sprites.ts`.
+
+---
+
+## 📊 LIVE STATS AND ANALYTICS
+
+<div align="center"><img src="docs/media/stats.jpg" alt="Live stats" width="100%" /></div>
+
+- **[/stats](https://extraction-dungeon-three.vercel.app/stats)** reads every game straight from the program's accounts on
+  devnet: games created, played and finished, seats filled, unique hosts and wallets, SOL staked, paid out and refunded,
+  escapes, kills, VRF chests opened, maps played, and recent games with Explorer links, plus live system checks
+  (Solana RPC, program deployed, MagicBlock TEE rollup). No server: anyone can verify the numbers.
+- **Vercel Web Analytics** for traffic (visitors, countries, devices).
+- **Google Analytics 4** gameplay funnel when `VITE_GA_ID` is set: `wallet_connected`, `game_created`, `game_joined`,
+  `cpu_added`, `game_started`, `run_finished`, `payout_claimed`, `lobby_cancelled`, `device_selected`, `open_in_phantom`.
+  No wallet addresses are sent; local and test sessions aren't counted.
+
+---
+
+## 🧪 TESTED
+
+| Suite | Count | Covers |
+|---|---|---|
+| Unit (`cargo test -p extraction_dungeon --lib`) | **8** | Payout split, equal split for empty bags, refunds when nobody escapes, rounding dust to the best bag, tier tables, Vault tiers, every map fully connected |
+| End-to-end in MagicSVM (`tests-magicsvm`) | **18** | Stakes, seats and bags delegated at join · **opponents can't read each other's bags** · movement, walls, chests, session keys · chest tiers land only in the private bag · attack cooldown · death → sack → looted → extract → settle · bags can't be swapped · timer → refunds · split by loot · **host can't end a run early to grab the pot** · host and timeout lobby cancels · live runs can't be cancelled · loot + extract on every map · locked exits, channeling, interrupts |
+| Live devnet smoke test (`app/scripts/smoke.ts`) | **13** | On the real TEE rollup: owner-only bag reads, VRF chests, Vault tiers, locked exits, cooldown, hidden sack contents, channeling, and the exact payout |
+
+---
+
+## 🐛 EDGE CASES WE HIT (AND FIXED)
+
+Written up for the MagicBlock team and other builders:
+
+- **`#[vrf_callback]` in SDK 0.18 burns the whole 200k CU budget**: the injected constraint derives the scoped VRF identity
+  at runtime. Fix: declare `vrf_program_identity` yourself with `address = CONST`, where `CONST` is a `const` item.
+- **Rollup blockhashes expire in about 2 seconds** (slots are ~11 ms), so a cached blockhash after any pause made moves
+  fail with "Blockhash not found". Fix: never sign with one older than 0.9 s, and retry once.
+- **Identical rollup transactions in one blockhash are dropped** ("already processed"), e.g. two `move(Down)` in a row. Fix:
+  a rotating `ComputeBudget` instruction makes every action unique.
+- **On the SBF target, an array-of-structs map table read back zeroed fields** for some entries. Fix: plain per-field const
+  arrays, caught by a MagicSVM test that plays every map.
+- **Ephemeral permission accounts hold no lamports**, so a `lamports() > 0` "already exists" check is always false. Check
+  `!data_is_empty()`.
+- **The rollup clock runs 1 to 3 s behind device clocks.** Client countdowns read the chain clock instead.
+- **Anchor pins:** `anchor-lang = "=1.0.2"` pulls 1.2.2 macro crates; pin every `anchor-*` crate to one version.
+- **Local stack:** with `ephemeral-validator 1.1.1`, commits to the local base fail and the ephemeral VRF queue has no oracle.
+  Devnet works.
+
+---
+
+## 🏆 SOLANA BLITZ V10: WHAT IT TAKES, AND WHERE WE STAND
+
+Blitz v10 asks every entry to integrate MagicBlock's **Ephemeral Rollups or VRF**, and judges on **creativity, technical
+depth, and how compellingly it showcases what's possible on Solana**. Submissions close **Fri 27 Nov 2026**.
+
+| Requirement / criterion | What we have |
 |---|---|
-| Easy | Slow (~1 action/s), wanders, rarely fights, leaves early with little loot |
-| Medium | Loots steadily, fights back, grabs sacks, extracts with ~8 pts or a third of the run left |
-| Hard | Fast (~4 actions/s), hunts players in range, raids the Vault, ambushes anyone channeling at an exit, holds out for ~14 pts |
+| ✅ **Eligibility:** uses Ephemeral Rollups or VRF | Ephemeral Rollups **and** Private Ephemeral Rollups (TEE) **and** VRF, all carrying the gameplay |
+| ✅ **Theme:** Entertainment Finance | Real SOL stakes, a pot split by loot, refunds, verifiable payouts, in an arcade game |
+| ✅ **Creativity** | Hidden-information PvP: private bags in a TEE make bluffing and "is he worth robbing?" possible on-chain |
+| ✅ **Technical depth** | Delegation, ER-local permissions, VRF callbacks, commit + undelegate, session keys; 18 + 8 + 13 tests; real edge cases fixed and documented |
+| ✅ **Showcase** | Live on devnet, playable on PC and phone, solo with CPUs, public on-chain stats, Explorer-verified payouts |
+| ✅ **Working MVP** | Deployed program, live site, full loop verified on devnet |
+| ✅ **Public repo** | This repository |
+| ⬜ **Demo video** | Rendered (2:54); upload and add the link above and in [docs/SUBMISSION.md](docs/SUBMISSION.md) |
+| ⬜ **Team details** | Fill in [docs/SUBMISSION.md](docs/SUBMISSION.md) |
+| ⬜ **Submit** | https://build.magicblock.app/?stage=blitz#submit (log in to see the form) |
 
-Set the stake to 0 for a free practice run.
+Before submitting, it's worth: a fresh run of the devnet smoke test, a quick game on a phone through Phantom, and a look
+at `/stats` to make sure the system checks are all **PASS**.
 
-## Art
-The sprite set (four knights, chests, loot sack, exit portal, floor and wall textures) was generated with Figma's AI image
-generation in one consistent 16-bit style, each object on a flat magenta background. `app/scripts/sprites.ts` keys out the
-magenta (a pure-magenta key, so the pink knight's cloak survives), splits the 2×2 hero sheet into the four seats, trims and
-scales everything into `app/public/sprites/`. The originals are in `art/raw/`.
+---
 
-## Repository
-```
-programs/extraction_dungeon/src/
-  lib.rs     instructions + accounts
-  state.rs   Run / PlayerSlot / Bag / Chest, payout math (+ unit tests)
-  map.rs     the five 20x13 layouts: walls, spawns, chests + Vault, exits (mirrored in the client)
-tests-magicsvm/tests/run.rs   end-to-end scenarios in MagicSVM (base + ER + VRF + permissions)
-app/
-  src/chain.ts   all RPC and transaction building, TEE auth (shared with the scripts)
-  src/main.ts    screens, input, prediction, private-bag view
-  src/game.ts    Phaser scene drawn purely from on-chain state
-  src/guide.ts   the in-game "How to play" guide
-  scripts/smoke.ts  full run over real RPC with privacy checks (NET=devnet)
-  scripts/sprites.ts  raw art -> game sprites
-  public/sprites/   the processed sprite set
-art/raw/     generated source images
-docs/        phase reports with test output
-```
+## 🛠️ RUN IT YOURSELF
 
-## Running it
 Prereqs: Rust, Solana CLI 3.x, Anchor CLI 1.1.2, Node 22+.
 
 ```bash
 anchor build
-cargo +stable test -p extraction_dungeon --lib          # payout math unit tests
-cd tests-magicsvm && cargo +stable test                 # 9 end-to-end scenarios (MagicSVM)
+cargo +stable test -p extraction_dungeon --lib          # 8 unit tests
+cd tests-magicsvm && cargo +stable test                 # 18 end-to-end scenarios (MagicSVM)
 
 cd app && npm install
-NET=devnet npx tsx scripts/smoke.ts                     # full run on devnet-tee (needs devnet SOL in ~/.config/solana/id.json)
-npm run dev                                             # client (localhost uses the local stack: scripts/start-stack.sh)
+NET=devnet npx tsx scripts/smoke.ts                     # live run on devnet-tee (needs devnet SOL in ~/.config/solana/id.json)
+npm run dev                                             # client on localhost:5180
 ```
-Open with `?net=devnet` to point a local client at devnet.
 
-## Tests
-- **8 unit tests:** proportional split, equal split for empty bags, nobody extracted refunds every stake, integer dust
-  goes to the best bag, tier boundaries, Vault tiers, and every map fully connected.
-- **18 MagicSVM scenarios:** stakes, seat rules and bags delegated at join · permissions created only by the owner, and
-  **opponents can't read each other's bags** · movement/walls/chests/session keys · chest tiers land in the private bag, not
-  the run · attack cooldown (rejected one slot early, accepted on time) · death → private bag into the sack → looted →
-  extract → settle (winner takes exactly the pot) · bags can't be swapped between seats · timer runs out → every stake refunded ·
-  1:3 split between two extractors · **the host can't end a run early to grab the pot** · host cancel refunds
-  everyone · anyone can cancel an abandoned lobby after the timeout · live runs can't be cancelled · loot + extract
-  on every map · exits locked, channeling, cooldown and interrupt rules.
-- **Devnet smoke test (TEE):** 17 checks, including owner-only bag reads (an opponent and an anonymous viewer are both
-  refused), VRF on the TEE, the cooldown, hidden sack contents, bags public after the run, and the exact payout.
+Open `http://localhost:5180/?net=devnet` to point the local client at devnet. `scripts/deploy-devnet.sh` upgrades the
+program on devnet; `app/` deploys to Vercel as a static Vite build.
 
-## Not done yet
+### Repository map
+
+```
+programs/extraction_dungeon/src/
+  lib.rs     instructions + account contexts
+  state.rs   Run / PlayerSlot / Bag / Chest, payout math (+ unit tests)
+  map.rs     the five layouts: walls, spawns, chests + Vault, exits (+ connectivity test)
+tests-magicsvm/tests/run.rs   end-to-end scenarios (base + ER + VRF + permissions)
+app/
+  src/chain.ts     RPC, transaction building, TEE auth, rollup blockhash handling
+  src/main.ts      screens, lobby, HUD, input, prediction, results, device + wallet flow
+  src/game.ts      Phaser scene drawn purely from on-chain state
+  src/bot.ts       CPU players (Easy / Medium / Hard)
+  src/sound.ts     procedural sound effects + the Crypt Run soundtrack
+  src/stats.ts     the public /stats page
+  src/analytics.ts Vercel Web Analytics + GA4 funnel events
+  src/guide.ts     the How to play guide
+  scripts/smoke.ts live devnet test
+docs/        submission text, demo script, build reports, README media
+```
+
+---
+
+## 🛣️ NEXT
+
+- A crank that ends each run automatically at the buzzer, and a post-commit Magic Action that settles in the same step.
+- A public list of open lobbies to join.
 - Collectible mints for legendary drops.
-- Closing finished run accounts to reclaim rent.
+- Reclaiming rent from finished runs.
+
+<div align="center">
+
+**Built on MagicBlock · Solana Blitz v10**
+
+<img src="app/public/sprites/chest_closed.png" width="40" />
+
+</div>
