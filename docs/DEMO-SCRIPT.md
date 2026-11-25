@@ -1,29 +1,50 @@
-# Demo video script (target 2:30, hard cap 3:00)
+# Demo video script (target 2:45, hard cap 3:00)
 
-**Setup before recording**
-- Two browsers side by side (e.g. Chrome + Brave, or Chrome + an incognito profile with its own Phantom), each with a
-  Phantom wallet in **testnet mode** holding ~0.2 devnet SOL.
-- Open https://extraction-dungeon-three.vercel.app in both. 1080p, browser zoom 100%, close other tabs.
-- A third tab on Solana Explorer (devnet), ready for the settle transaction.
-- Stake **0.05 SOL**, run length **90 s**.
-- Rehearse the fight once: P1 walks ↓↓→→→ to the left of the top exit, P2 comes from the bottom right.
-  Open a chest *before* the fight so the dropped bag is worth something.
-- **The privacy shot is the money shot:** frame both screens so viewers see P1's HUD say "Your bag 🔒 3 pts" while P2's
-  says "bag ?" for P1.
+Judges score **creativity, technical depth, and how compellingly it shows what's possible on Solana**. The video has to
+land three ideas fast: (1) it's a fun arcade game, (2) every action is on-chain in real time with no popups, (3) your bag is
+private until the run ends, and the payout is settled by the program.
+
+## Setup before recording
+
+- **Two browser windows side by side** (e.g. Chrome + a second Chrome profile), each with Phantom in **testnet mode** and
+  ~0.3 devnet SOL (faucet.solana.com). Window A = you (P1, host), window B = a friend or your second profile (P2).
+- Open https://extraction-dungeon-three.vercel.app in both. 1080p screen recording, browser zoom 100%, other tabs closed.
+- Sound **on** (the chiptune track and effects carry the energy). Record system audio.
+- A third tab on Solana Explorer (devnet) for the payout transaction.
+- Stake **0.05 SOL**, timer **2:00**, plus one **Hard CPU** so the fight is busy.
+- The map is random each run. Do a couple of rehearsal runs; if you get a layout you like (Crossroads or Rooms read
+  best on video), keep that take.
+- **The money shot is privacy:** frame both windows so viewers see A's HUD say "Your bag 🔒 3" while B's player list shows
+  "?" for A.
+- Optional: a phone (or the browser's mobile view) for a 4-second shot of the D-pad layout.
+
+## Shot list
 
 | Time | On screen | Voice-over |
 |---|---|---|
-| 0:00–0:12 | Title card or the game mid-fight | "Extraction Dungeon. Stake SOL, loot a dungeon, fight other players, and get out alive. What you extract with is yours, and nobody can see what you're carrying." |
-| 0:12–0:25 | First visit: the **How to play** guide opens. Scroll it once, close. | "New players get a six-step guide: join, loot, fight, steal, get out, get paid." |
-| 0:25–0:42 | P1: Connect Phantom → Create run → Join. P2 opens the link, joins. P1's lobby shows pot 0.10. Start. | "Joining puts your stake in a vault that never leaves Solana, and gives you a private bag on a MagicBlock Private Ephemeral Rollup, readable only by your own session key." |
-| 0:42–1:05 | Split screen. P1 opens a chest: **RARE +3** on P1's screen. On P2's screen the chest just opens: "LOOTED ?". | "Walking into a chest asks MagicBlock VRF, running inside the rollup, to roll the loot. The tier lands in your private bag. Look at the other screen: they saw the chest open, but not what came out." |
-| 1:05–1:30 | P2 hunts P1. Spam-pressing attack: the meter refills, and only one hit per 0.4 s lands. Three hits: **SLAIN**, sack with "?". | "Three hits kill, with a cooldown so the fastest clicker doesn't automatically win. The victim's whole bag drops as a sack, and nobody knows what's inside." |
-| 1:30–1:45 | P2 steps on the sack: **+3**. Walks to EXIT, presses E: **EXTRACTED**. | "Grab it and run. To keep your loot you have to reach an exit. Stay greedy too long and you're the one getting robbed." |
-| 1:45–2:05 | End run → "Committing the run and every bag…" → results with every bag revealed. Settle payouts. | "When the run ends, the run and every bag are committed back to Solana, and the bags are revealed. Extracted players split the pot by loot points." |
-| 2:05–2:15 | Explorer: the settle tx, the vault → winner transfer. | "The payout comes straight from the program's vault, on devnet." |
-| 2:15–2:30 | README architecture diagram, then the GitHub repo | "Private Ephemeral Rollup, VRF, session keys and an Anchor program, tested in MagicSVM and on devnet. Entertainment Finance with real stakes and hidden information. Extraction Dungeon." |
+| 0:00–0:10 | Hard cut into a fight mid-run: chests flashing, a knight going down, "SLAIN", the music running. | "This is Extraction Dungeon. Stake SOL, loot a dungeon, fight, and get out alive. Every single move here is a Solana transaction." |
+| 0:10–0:22 | Landing page (arcade cabinet), then **Press start → Dev/Phantom → ★ New game**: pick 0.05 SOL, 2:00, Create. | "It's built on MagicBlock. You put in a stake, it goes into a vault that never leaves Solana's base layer." |
+| 0:22–0:38 | **Player select**: B joins from the invite link, you add **+ CPU Hard**. Point at "STAGE 3 · ROOMS". Press **START GAME**, the loading bar ("Loading stage…"). | "Up to four players, or CPU bots if you're alone. A bot is a real on-chain player with its own stake. Every run gets one of five random dungeons. Start, and the whole run moves onto a MagicBlock Private Ephemeral Rollup running inside a TEE." |
+| 0:38–0:55 | Both windows. Walk around fast; show the knight moving instantly. | "From here there are no wallet popups and no fees. A browser session key signs every step, and the rollup confirms it in milliseconds." |
+| 0:55–1:20 | A opens a chest: **RARE +3**. Cut to B's window: the same chest just shows **LOOTED ?**. Then A's HUD "Your bag 🔒 3" next to B's roster showing "?" for A. | "Walking into a chest asks MagicBlock VRF for a provable roll, inside the rollup. The loot goes into my private bag. Look at the other screen: they saw the chest open, but not what came out. The TEE won't let anyone else read my bag." |
+| 1:20–1:35 | Go for the glowing **Vault** in the centre: it rolls RARE or LEGENDARY. | "The Vault in the middle never rolls common, so that's where everybody fights." |
+| 1:35–1:55 | Fight: B (or the Hard CPU) hits A, the attack meter refills between hits; three hits, **SLAIN**, a sack with "?". B walks over it: "+" pops on B's side only. | "Three hits kill, with a cooldown so spam-clicking doesn't win. Your whole bag drops as a sack, and nobody knows what's in it. Whoever grabs it is gambling." |
+| 1:55–2:10 | **EXITS OPEN** banner. A player stands on an exit, the green channel ring fills, **EXTRACTED**. Show a hit interrupting someone else's channel if you catch it. | "Exits unlock a quarter of the way in. Extracting takes two seconds of standing still, and any hit cancels it. Get out before the timer, or lose everything." |
+| 2:10–2:25 | Timer hits zero, the music speeds up in the last 30 s, then **Counting the loot…** then the results: **YOU WIN!** with the payout counting up and the high-score table. Press **CLAIM WINNINGS** for the coin shower and the **PAID ✓** stamp. | "When time's up, the run and every bag are committed back to Solana and revealed. The program splits the pot by loot. Nobody can end a run early, the host takes no cut, and if nobody escapes everyone's refunded." |
+| 2:25–2:33 | Explorer: the settle transaction, vault to winner. | "That payout came straight from the program's vault, on devnet." |
+| 2:33–2:38 | Phone view with the D-pad (optional). | "It plays on phones too, fullscreen." |
+| 2:38–2:50 | README architecture diagram, then the repo. | "Private Ephemeral Rollup, VRF and session keys, an Anchor program with eighteen end-to-end tests in MagicSVM and a live devnet check. Real stakes, hidden information, arcade fun. Extraction Dungeon." |
 
-**If something goes wrong on camera**
+## If something goes wrong on camera
+
 - A VRF chest takes over 3 s: cut it. The "opening" flicker plus the tier popup is the shot.
-- The commit takes a moment: keep "Committing…" on screen for 1–2 s. It shows the round trip.
-- Keep the HUD visible in the fight shots: pot, your 🔒 bag, the attack meter and the timer tell the story without narration.
+- "Counting the loot…" takes a few seconds: keep 1–2 s of it, it shows the trip back to Solana, then cut.
+- You die early (the Hard CPU is ruthless): keep it. "SLAIN" and the "?" sack are great footage; let window B carry the
+  rest of the run.
+- Keep the HUD visible in fight shots: pot, your 🔒 bag, the attack meter and the timer tell the story on their own.
+
+## After recording
+
+1. Upload to YouTube (unlisted is fine) or Loom.
+2. Paste the link into `docs/SUBMISSION.md` (Video) and into the form.
+3. Fill in the Team section, then submit at https://build.magicblock.app/?stage=blitz#submit before Fri 27 Nov.
