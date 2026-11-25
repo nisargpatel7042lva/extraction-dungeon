@@ -7,7 +7,8 @@ Every step, hit and chest happens on a **MagicBlock Private Ephemeral Rollup** (
 **nobody can see what you're carrying**. **MagicBlock VRF** decides what's inside each chest, and the pot settles back on
 Solana when the run ends.
 
-- **Play:** https://extraction-dungeon-three.vercel.app (devnet: Phantom in testnet mode + [faucet SOL](https://faucet.solana.com)). The **How to play** button explains everything in six steps.
+- **Play:** https://extraction-dungeon-three.vercel.app
+- **Live stats (on-chain):** https://extraction-dungeon-three.vercel.app/stats: games, players, SOL staked and paid out, read from the program's accounts, plus live system checks (devnet: Phantom in testnet mode + [faucet SOL](https://faucet.solana.com)). The **How to play** button explains everything in six steps.
 - **Program (devnet):** [`2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet)
 - **Rollup:** `devnet-tee.magicblock.app` (TEE validator `MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo`)
 

@@ -18,6 +18,7 @@ Play solo vs CPUs or with friends.
 
 **Links**
 - Live (devnet): https://extraction-dungeon-three.vercel.app
+- Live on-chain stats: https://extraction-dungeon-three.vercel.app/stats
 - Repo: https://github.com/nisargpatel7042lva/extraction-dungeon
 - Video: <YouTube / Loom URL, add after recording>
 - Program (devnet): `2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`
@@ -62,6 +63,12 @@ information (you never know whether that player is worth killing), and a payout 
   `callback_open_chest`, gated by the program's scoped VRF identity, writes the tier into the opener's private bag
   (about 0.7 s on devnet-tee).
 - **Session keys:** a per-run browser keypair registered at join, checked on every rollup action and swept back after.
+
+**Proof it's live**
+A public stats page (`/stats`) reads every game straight from the program's accounts on devnet: games created,
+played and finished, seats filled, unique wallets, SOL staked, paid out and refunded, escapes, kills, VRF chests
+opened, maps played and recent games with Explorer links, plus live system checks (devnet RPC, program deployed,
+MagicBlock TEE rollup). No server and no analytics service: anyone can verify the numbers.
 
 **What's tested**
 - 8 unit tests: payout math (proportional split, equal split, refunds when nobody escapes, dust to the best bag), tier
