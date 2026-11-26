@@ -604,9 +604,12 @@ function showCancelled() {
       <div id="proof" class="proof"></div>
       <div class="row" style="justify-content:center"><button id="again" class="big pink">▶ New game</button></div>
     </div>`;
-  if (Number(s.entryLamports.toString()) > 0) void chain.payoutSignature(runKey!).then((sig) => sig && showProof(sig, "refund"));
+  if (Number(s.entryLamports.toString()) > 0) void chain.payoutSignature(runKey!, "refund").then((sig) => sig && showProof(sig, "refund"));
   $("again").addEventListener("click", newGame);
 }
+
+/** The payout this tab sent itself, so a re-render shows it instead of looking it up. */
+let knownPayout: { run: string; sig: string } | null = null;
 
 /** Makes your bag private on the TEE. Idempotent; safe to call again after a reload. */
 let protecting: Promise<unknown> | null = null;
@@ -1146,7 +1149,12 @@ async function showEnded() {
   if (iWon) sfx.win();
   else if (me >= 0) sfx.lose();
   if (s.settled && iWon && myShare > 0) coinRain(40);
-  if (s.settled) void chain.payoutSignature(runKey!).then((sig) => sig && showProof(sig, "payout"));
+  if (s.settled) {
+    // Our own claim already knows its signature; otherwise look the payout up on-chain.
+    const known = knownPayout?.run === runKey!.toBase58() ? knownPayout.sig : null;
+    if (known) showProof(known, "payout");
+    else void chain.payoutSignature(runKey!, "payout").then((sig) => sig && showProof(sig, "payout"));
+  }
 
   $("settle")?.addEventListener("click", () =>
     guarded("Settle", async () => {
@@ -1154,6 +1162,7 @@ async function showEnded() {
       btn.disabled = true;
       btn.textContent = "Paying out…";
       const sig = await chain.settleRun(wallet!, runKey!, s);
+      knownPayout = { run: runKey!.toBase58(), sig };
       track("payout_claimed", { won: iWon, amount_sol: myShare / LAMPORTS_PER_SOL });
       showProof(sig, "payout");
       sfx.coin();

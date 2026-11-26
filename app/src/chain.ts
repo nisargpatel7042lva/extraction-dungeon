@@ -692,11 +692,24 @@ export class Chain {
     return this.sendBase(wallet, [ix]);
   }
 
-  /** The transaction that paid out (settle) or refunded (cancel) a run: the vault's latest
-   *  successful one. Null if the vault hasn't paid anything yet or the lookup fails. */
-  async payoutSignature(run: PublicKey): Promise<string | null> {
-    const sigs = await this.base.getSignaturesForAddress(vaultPda(run), { limit: 5 }).catch(() => []);
-    return sigs.find((s) => !s.err)?.signature ?? null;
+  /** The transaction that paid out (settle) or refunded (cancel) a run. The vault's newest
+   *  signature isn't enough: right after a settle the RPC may not have indexed it yet and would
+   *  return an older join, so this checks each candidate's logs for the instruction itself and
+   *  retries for a few seconds. Null if none is found. */
+  async payoutSignature(run: PublicKey, kind: "payout" | "refund" = "payout"): Promise<string | null> {
+    const want = kind === "refund" ? "Instruction: CancelRun" : "Instruction: SettleRun";
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const sigs = await this.base.getSignaturesForAddress(vaultPda(run), { limit: 10 }).catch(() => []);
+      for (const s of sigs) {
+        if (s.err) continue;
+        const tx = await this.base
+          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" })
+          .catch(() => null);
+        if (tx?.meta?.logMessages?.some((l) => l.includes(want))) return s.signature;
+      }
+      await sleep(2500);
+    }
+    return null;
   }
 
   /** Cancels a lobby that never started and refunds every seated wallet its stake. */
