@@ -42,7 +42,7 @@ Extraction Dungeon is our entry for **MagicBlock Solana Blitz v10 (Entertainment
 |---|---|
 | ▶ **Play** | https://extractiondungeon.vercel.app (devnet: Phantom in testnet mode + [free devnet SOL](https://faucet.solana.com)) |
 | 📊 **Live stats** | https://extractiondungeon.vercel.app/stats: every game, read straight from the chain |
-| 📼 **Demo video** | 2:54, with gameplay and voice-over (link added after upload) |
+| 📼 **Demo video** | [2:58 demo with gameplay and voice-over, on X](https://x.com/NisargPatel5563/status/2125804554784813237) |
 | 🔗 **Program** | [`2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`](https://explorer.solana.com/address/2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw?cluster=devnet) (devnet) |
 | 🔒 **Rollup** | `devnet-tee.magicblock.app` (TEE validator `MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo`) |
 
@@ -287,7 +287,7 @@ depth, and how compellingly it showcases what's possible on Solana**. Submission
 | ✅ **Showcase** | Live on devnet, playable on PC and phone, solo with CPUs, public on-chain stats, Explorer-verified payouts |
 | ✅ **Working MVP** | Deployed program, live site, full loop verified on devnet |
 | ✅ **Public repo** | This repository |
-| ⬜ **Demo video** | Rendered (2:54); upload and add the link above and in [docs/SUBMISSION.md](docs/SUBMISSION.md) |
+| ✅ **Demo video** | [Posted on X](https://x.com/NisargPatel5563/status/2125804554784813237) and submitted to Blitz v10 on 26 Nov 2026 |
 | ⬜ **Team details** | Fill in [docs/SUBMISSION.md](docs/SUBMISSION.md) |
 | ⬜ **Submit** | https://build.magicblock.app/?stage=blitz#submit (log in to see the form) |
 

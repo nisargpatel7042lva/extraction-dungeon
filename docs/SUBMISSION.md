@@ -20,7 +20,8 @@ Play solo vs CPUs or with friends.
 - Live (devnet): https://extractiondungeon.vercel.app
 - Live on-chain stats: https://extractiondungeon.vercel.app/stats
 - Repo: https://github.com/nisargpatel7042lva/extraction-dungeon
-- Video: <YouTube / Loom URL, add after recording>
+- Video + thread: https://x.com/NisargPatel5563/status/2125804554784813237
+- Submitted to Blitz v10 on 26 Nov 2026
 - Program (devnet): `2c1W2MUPCkF6bdcKvKXmLePwBorg6yy8L1A6BdoDBBqw`
 
 **Description**
