@@ -1,5 +1,6 @@
 // Public stats page: everything is read live from the devnet program's accounts, so the numbers
 // are on-chain facts anyone can verify (no analytics service, no server).
+import { KEEP_UNCLAIMED_POT } from "./chain";
 import "./polyfill";
 import "./style.css";
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -101,7 +102,7 @@ function payouts(pot: number, seats: { extracted: boolean }[], points: number[])
   const out = seats.map(() => 0);
   const esc = seats.map((p, i) => ({ p, i })).filter(({ p }) => p.extracted);
   if (!seats.length) return out;
-  if (!esc.length) return out;
+  if (!esc.length) return KEEP_UNCLAIMED_POT ? out : out.map(() => Math.floor(pot / seats.length));
   const total = esc.reduce((a, { i }) => a + points[i], 0);
   for (const { i } of esc) out[i] = total === 0 ? Math.floor(pot / esc.length) : Math.floor((pot * points[i]) / total);
   return out;
@@ -196,7 +197,7 @@ async function render() {
   const settled = full.filter((r) => r.full!.settled && r.status === 2);
   const unclaimed = settled.filter((r) => !r.full!.seats.some((s) => s.extracted));
   const paid = settled.filter((r) => r.full!.seats.some((s) => s.extracted)).reduce((a, r) => a + r.pot, 0);
-  const lost = unclaimed.reduce((a, r) => a + r.pot, 0);
+  const lost = unclaimed.reduce((a, r) => a + r.pot, 0); // refunded, or kept when KEEP_UNCLAIMED_POT
   const refunded = cancelled.reduce((a, r) => a + r.entry * r.players, 0);
   const sum = (k: "escaped" | "slain" | "kills" | "chests") => full.filter((r) => r.status === 2).reduce((a, r) => a + r.full![k], 0);
 
@@ -209,7 +210,7 @@ async function render() {
     tile("UNIQUE WALLETS", String(wallets.size), "var(--pink)"),
     tile("SOL STAKED", sol(staked), "var(--gold)"),
     tile("SOL PAID OUT", sol(paid), "var(--green)"),
-    tile("SOL LOST TO THE DUNGEON", `${sol(lost)} · ${unclaimed.length} runs`, "var(--red)"),
+    tile(KEEP_UNCLAIMED_POT ? "SOL LOST TO THE DUNGEON" : "NOBODY ESCAPED (REFUNDED)", `${unclaimed.length} runs · ${sol(lost)} SOL`, "var(--red)"),
     tile("ESCAPES", String(sum("escaped")), "var(--green)"),
     tile("KILLS", String(sum("kills")), "var(--red)"),
     tile("CHESTS OPENED (VRF)", String(sum("chests")), "var(--gold)"),

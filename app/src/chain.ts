@@ -73,7 +73,10 @@ export const EPHEMERAL_QUEUE = new PublicKey("5hBR571xnXppuCPveTrctfTU7tJLSN94nq
 export const SLOT_HASHES = new PublicKey("SysvarS1otHashes111111111111111111111111111");
 
 export const Dir = { Up: 0, Right: 1, Down: 2, Left: 3 } as const;
-/** Receives the pot when nobody escapes (mirrors `TREASURY` in the program). */
+/** Mirrors KEEP_UNCLAIMED_POT in the program: false = refunds when nobody escapes. */
+export const KEEP_UNCLAIMED_POT = false;
+
+/** Receives the pot when nobody escapes and KEEP_UNCLAIMED_POT is on (mirrors `TREASURY`). */
 export const TREASURY = new PublicKey("3fTVWVBgm8yYh8XXd7qTBCBuLNP4nMKsCAgesHHCBnA5");
 
 export const Status = { Lobby: 0, Live: 1, Ended: 2, Cancelled: 3 } as const;

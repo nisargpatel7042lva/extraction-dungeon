@@ -6,7 +6,10 @@ use crate::{
 };
 
 pub const MAX_PLAYERS: usize = 4;
-/// The house treasury: when nobody escapes a run, its pot goes here (nobody earned it).
+/// What happens to the pot when nobody escapes: false = every stake is refunded (current rule);
+/// true = the dungeon keeps it and `settle_run` sends it to TREASURY.
+pub const KEEP_UNCLAIMED_POT: bool = false;
+/// The house treasury, used when KEEP_UNCLAIMED_POT is on.
 pub const TREASURY: Pubkey = pubkey!("3fTVWVBgm8yYh8XXd7qTBCBuLNP4nMKsCAgesHHCBnA5");
 pub const START_HP: u8 = 3;
 /// Lamports moved from the wallet to the session key at join, for ER/TEE fees.
@@ -396,9 +399,14 @@ impl Run {
     /// host never takes a cut, so ending or abandoning a run can't profit them.
     /// - Extracted players share the pot in proportion to bag points.
     /// - Extracted with empty bags only: equal split.
-    /// - Nobody extracted: nobody gets anything; `settle_run` sends the pot to the treasury.
+    /// - Nobody extracted: every seat gets its stake back, or (KEEP_UNCLAIMED_POT) nobody is paid
+    ///   and `settle_run` sends the pot to the treasury.
     /// Integer dust goes to the best-scoring extracted player, so payouts sum to the pot exactly.
     pub fn payouts(&self, points: &[u16; MAX_PLAYERS]) -> [u64; MAX_PLAYERS] {
+        self.payouts_with(points, KEEP_UNCLAIMED_POT)
+    }
+
+    pub fn payouts_with(&self, points: &[u16; MAX_PLAYERS], keep_unclaimed: bool) -> [u64; MAX_PLAYERS] {
         let mut out = [0u64; MAX_PLAYERS];
         let seated = self.seated();
         let n = seated.len();
@@ -408,6 +416,14 @@ impl Run {
         let pot = self.pot as u128;
         let n_ext = seated.iter().filter(|p| p.extracted).count() as u128;
         if n_ext == 0 {
+            if keep_unclaimed {
+                return out;
+            }
+            let each = pot / n as u128;
+            for o in out.iter_mut().take(n) {
+                *o = each as u64;
+            }
+            out[0] += (pot - each * n as u128) as u64;
             return out;
         }
         let total: u128 = seated
@@ -491,9 +507,16 @@ mod tests {
     }
 
     #[test]
-    fn nobody_extracted_pays_no_player() {
+    fn nobody_extracted_refunds_every_stake() {
         let (r, p) = run_with(250, &[(false, 3), (false, 0)]);
-        assert_eq!(r.payouts(&p), [0, 0, 0, 0], "the whole pot is left for the treasury");
+        assert_eq!(r.payouts_with(&p, false), [125, 125, 0, 0]);
+        assert_eq!(r.payouts_with(&p, false).iter().sum::<u64>(), r.pot);
+    }
+
+    #[test]
+    fn nobody_extracted_with_keep_unclaimed_pays_no_player() {
+        let (r, p) = run_with(250, &[(false, 3), (false, 0)]);
+        assert_eq!(r.payouts_with(&p, true), [0, 0, 0, 0], "the whole pot is left for the treasury");
     }
 
     #[test]

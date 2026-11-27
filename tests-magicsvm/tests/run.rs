@@ -667,7 +667,7 @@ fn bags_cannot_be_swapped_between_seats() {
 }
 
 #[test]
-fn timer_runs_out_with_nobody_out_and_the_pot_goes_to_the_treasury() {
+fn timer_runs_out_with_nobody_out_and_every_stake_is_refunded() {
     let mut w = World::new(2);
     w.start();
     let s0 = w.sessions[0].insecure_clone();
@@ -680,8 +680,8 @@ fn timer_runs_out_with_nobody_out_and_the_pot_goes_to_the_treasury() {
     let before: Vec<u64> = w.wallets.iter().map(|k| balance(&w.svm, Base, pk(k))).collect();
     w.settle().unwrap();
     let gained: Vec<u64> = w.wallets.iter().zip(&before).map(|(k, b)| balance(&w.svm, Base, pk(k)) - b).collect();
-    assert_eq!(gained, vec![0, 0], "nobody got out: no player is paid");
-    assert_eq!(balance(&w.svm, Base, TREASURY) - treasury_before, 2 * ENTRY, "the unclaimed pot goes to the treasury");
+    assert_eq!(gained, vec![ENTRY, ENTRY], "nobody got out: stakes go back");
+    assert_eq!(balance(&w.svm, Base, TREASURY), treasury_before, "nothing goes to the treasury while refunds are on");
     assert!(balance(&w.svm, Base, pk(&w.authority)) <= host_before, "the host takes no cut");
 }
 
