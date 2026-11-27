@@ -42,6 +42,23 @@ export async function waitForPhantom(ms = 2500): Promise<boolean> {
   return hasPhantom();
 }
 
+/** Reconnects Phantom without a popup if this site was approved before; null otherwise. */
+export async function reconnectPhantom(): Promise<WalletSigner | null> {
+  if (!(await waitForPhantom(1500))) return null;
+  const p = phantom()!;
+  try {
+    const { publicKey } = await (p.connect as (o?: { onlyIfTrusted: boolean }) => Promise<{ publicKey: PublicKey }>)({ onlyIfTrusted: true });
+    return { publicKey, signTransaction: (tx) => p.signTransaction(tx) };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether this tab already has a dev wallet (it lives in sessionStorage, so it survives reloads). */
+export function hasDevWallet(chain: Chain): boolean {
+  return !!sessionStorage.getItem(`ed:devwallet:${chain.net.base}`);
+}
+
 export async function connectPhantom(): Promise<WalletSigner> {
   if (!(await waitForPhantom())) throw new Error("Phantom not found");
   const p = phantom()!;

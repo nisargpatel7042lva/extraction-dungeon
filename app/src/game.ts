@@ -165,6 +165,20 @@ export class DungeonScene extends Phaser.Scene {
     this.fitCamera();
   }
 
+  /** Whether the dungeon is actually on screen: scene running and built, canvas sized to the stage,
+   *  game loop running, WebGL context alive. */
+  isHealthy(): boolean {
+    const g = this.game;
+    if (!g || !this.sys?.isActive() || !this.players.length) return false;
+    const c = g.canvas;
+    const parent = c?.parentElement;
+    if (!c || !parent || !c.width || !c.height) return false;
+    if (Math.abs(c.width / (window.devicePixelRatio || 1) - parent.clientWidth) > 2 && Math.abs(c.width - parent.clientWidth) > 2) return false;
+    if (!g.loop?.running) return false;
+    if ((g.renderer as { contextLost?: boolean } | null)?.contextLost) return false;
+    return true;
+  }
+
   /** Rebuilds the dungeon for a new run (another layout, fresh chests and private tier memory). */
   resetRun() {
     if (this.sys?.isActive()) this.scene.restart();
@@ -483,12 +497,18 @@ export function startGame(parent: HTMLElement): DungeonScene {
         // when the page layout shifts, which left the canvas stuck small with empty space to its
         // right. Track the container itself (only once booted: resizing earlier breaks WebGL).
         let last = `${game.scale.width}x${game.scale.height}`;
-        new ResizeObserver(() => {
+        const remeasure = (force = false) => {
           const w = parent.clientWidth, h = parent.clientHeight;
-          if (!w || !h || `${w}x${h}` === last) return;
+          if (!w || !h || (!force && `${w}x${h}` === last)) return;
           last = `${w}x${h}`;
           game.scale.resize(w, h);
-        }).observe(parent);
+        };
+        new ResizeObserver(() => remeasure()).observe(parent);
+        // A wallet popup (focus leaves the page) or leaving fullscreen can land while the canvas is
+        // mid-resize; measure again once the page is back.
+        window.addEventListener("focus", () => remeasure(true));
+        document.addEventListener("fullscreenchange", () => setTimeout(() => remeasure(true), 120));
+        document.addEventListener("visibilitychange", () => !document.hidden && remeasure(true));
       },
     },
   });

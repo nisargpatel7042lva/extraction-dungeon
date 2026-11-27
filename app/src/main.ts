@@ -21,7 +21,7 @@ import {
   useLayout,
 } from "./chain";
 import { DungeonScene, SEAT_COLORS, startGame } from "./game";
-import { connectPhantom, devWallet, hasPhantom, isMobileBrowser, sessionKey, waitForPhantom, walletBrowseLinks } from "./wallet";
+import { connectPhantom, devWallet, hasDevWallet, hasPhantom, isMobileBrowser, reconnectPhantom, sessionKey, waitForPhantom, walletBrowseLinks } from "./wallet";
 import { Bot, BotLevel, LEVELS } from "./bot";
 import bs58 from "bs58";
 import { initGuide } from "./guide";
@@ -302,8 +302,39 @@ async function guarded(label: string, f: () => Promise<unknown>) {
 }
 
 function mySeat(): number {
-  if (!state || !wallet) return -1;
-  return state.players.slice(0, state.playerCount).findIndex((p) => p.wallet.equals(wallet!.publicKey));
+  if (!state) return -1;
+  const seated = state.players.slice(0, state.playerCount);
+  if (wallet) {
+    const i = seated.findIndex((p) => p.wallet.equals(wallet!.publicKey));
+    if (i >= 0) return i;
+  }
+  // After a reload the wallet may not be reconnected yet, but this tab still holds the run's session
+  // key, and that key (not the wallet) signs every in-run action.
+  if (session) return seated.findIndex((p) => p.signer.equals(session!.publicKey));
+  return -1;
+}
+
+/** The wallet, connecting it first if needed (only joining, starting and claiming need one). */
+async function ensureWallet(): Promise<WalletSigner> {
+  if (wallet) return wallet;
+  wallet = NETS[net].airdrop || params.has("dev") ? await devWallet(chain) : await connectPhantom();
+  renderWallet();
+  return wallet;
+}
+
+/** A reload with a run in the link: reopen it straight away instead of the connect screen, so a
+ *  refresh never strands you outside a live run (where the timer would burn your stake). */
+async function resumeRun(run: PublicKey) {
+  wallet = (NETS[net].airdrop || params.has("dev")) && hasDevWallet(chain) ? await devWallet(chain) : await reconnectPhantom();
+  renderWallet();
+  try {
+    await openRun(run);
+  } catch (e) {
+    console.error("resume", e);
+    showConnect();
+    return;
+  }
+  if (!wallet && state?.status === Status.Live && mySeat() >= 0) toast("You're back in your run. Your wallet is only needed to claim.");
 }
 
 // ---------- layout modes ----------
@@ -686,6 +717,7 @@ function lobbyExpired(s: RunState) {
 let lastLobbyHtml = "";
 function showLobby() {
   const s = state!;
+  if (!wallet) return showConnect();
   setMode("landing");
   const me = mySeat();
   const isHost = wallet!.publicKey.equals(s.authority);
@@ -790,12 +822,38 @@ function showLive() {
   setMode("live");
   if (!wasLive && isTouch && matchMedia("(orientation: portrait)").matches) toast("📱↻ Turn your phone sideways to see the whole dungeon");
   screen.innerHTML = "";
-  if (!scene) scene = startGame(gameEl);
+  if (!scene) {
+    scene = startGame(gameEl);
+    watchStage();
+  }
   startClockSync();
   startBots();
   watchMyBag();
   pushToScene();
   renderHud();
+}
+
+/** If the dungeon didn't come up (blank stage), rebuild the game view instead of making the
+ *  player refresh. Checked twice shortly after it opens. */
+let stageRebuilds = 0;
+function watchStage() {
+  for (const ms of [2500, 6000]) {
+    setTimeout(() => {
+      if (!scene || !document.body.classList.contains("mode-live") || document.hidden) return;
+      if (scene.isHealthy() || stageRebuilds >= 2) return;
+      stageRebuilds++;
+      console.warn("stage not rendering; rebuilding the game view");
+      track("stage_rebuilt", { attempt: stageRebuilds });
+      try {
+        scene.game?.destroy(true);
+      } catch {
+        /* already gone */
+      }
+      gameEl.innerHTML = "";
+      scene = startGame(gameEl);
+      pushToScene();
+    }, ms);
+  }
 }
 
 /** Subscribes to your private bag through your session key's TEE connection. */
@@ -1161,7 +1219,7 @@ async function showEnded() {
       const btn = $("settle") as HTMLButtonElement;
       btn.disabled = true;
       btn.textContent = "Paying out…";
-      const sig = await chain.settleRun(wallet!, runKey!, s);
+      const sig = await chain.settleRun(await ensureWallet(), runKey!, s);
       knownPayout = { run: runKey!.toBase58(), sig };
       track("payout_claimed", { won: iWon, amount_sol: myShare / LAMPORTS_PER_SOL });
       showProof(sig, "payout");
@@ -1404,38 +1462,42 @@ initAnalytics();
 if (savedDevice) initGuide();
 else void askDevice().then(() => initGuide());
 renderWallet();
-showConnect();
+if (runKey) void resumeRun(runKey);
+else showConnect();
 
-// ---------- Vault Guardians: a MagicBlock crank on the rollup moves them ----------
-// The host's tab schedules the crank once the run is live; from then on the rollup's own scheduler
-// ticks the guardians, so they keep going even if every tab closes. Only if no tick has landed for
-// a few seconds (scheduler down) does this tab nudge them itself; the on-chain rate limit makes
-// extra ticks harmless either way.
+// ---------- Vault Guardians: keep them moving ----------
+// The host's tab first asks the rollup's scheduler to tick them (a MagicBlock crank, validator 1.x).
+// Whether or not that works (validator 2.0 moved cranks to Hydra and rejects it), seated tabs tick
+// them whenever no tick has landed lately: the host's tab right away, everyone else's after a pause
+// (a backup if the host left or reloaded). Ticks are signed by the session key, so no wallet is
+// needed, and the on-chain rate limit makes extra ticks harmless.
 let ticking = false;
-let crankAsked = "";
+let crankTried = "";
 let lastTick = { slot: "", at: 0 };
 setInterval(() => {
   const s = state;
-  if (ticking || !s || s.status !== Status.Live || !onEr || !wallet || !runKey) return;
-  if (!wallet.publicKey.equals(s.authority)) return;
+  if (ticking || !s || s.status !== Status.Live || !onEr || !runKey) return;
   if (!(s.monsters ?? []).some((g) => g.alive)) return;
   if (secondsLeft() === 0) return;
-  const key = mySeat() >= 0 ? session : bots[0]?.session;
+  const me = mySeat();
+  const key = me >= 0 ? session : bots[0]?.session;
   if (!key) return;
   const slot = s.lastTickSlot.toString();
   if (slot !== lastTick.slot) lastTick = { slot, at: Date.now() };
+  const hostTab = (wallet?.publicKey.equals(s.authority) ?? false) || bots.length > 0 || me === 0;
   const scheduled = !s.crankSigner.equals(PublicKey.default);
-  if (!scheduled && crankAsked !== runKey.toBase58()) {
-    crankAsked = runKey.toBase58();
+  if (!scheduled && hostTab && crankTried !== runKey.toBase58()) {
+    crankTried = runKey.toBase58(); // once per run: if the validator refuses, the ticks below take over
     ticking = true;
     chain
       .startGuardians(key, runKey, s.playerCount)
       .then(() => track("guardian_crank_scheduled"))
-      .catch(() => (crankAsked = "")) // retried on the next pass
+      .catch(() => track("guardian_crank_unavailable"))
       .finally(() => (ticking = false));
     return;
   }
-  if (scheduled && Date.now() - lastTick.at < 3000) return; // the crank is ticking
+  const quietMs = Date.now() - lastTick.at;
+  if (quietMs < (scheduled ? 3000 : hostTab ? 0 : 2500)) return;
   ticking = true;
   chain
     .tickMonsters(key, runKey, s.playerCount)
