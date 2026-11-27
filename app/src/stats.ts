@@ -1,7 +1,7 @@
 // Public stats page: everything is read live from the devnet program's accounts, so the numbers
 // are on-chain facts anyone can verify (no analytics service, no server).
-import { KEEP_UNCLAIMED_POT } from "./chain";
 import "./polyfill";
+import { KEEP_UNCLAIMED_POT } from "./chain";
 import "./style.css";
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import bs58 from "bs58";

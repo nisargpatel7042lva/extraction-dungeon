@@ -1,5 +1,5 @@
-import { KEEP_UNCLAIMED_POT } from "./chain";
 import "./polyfill";
+import { KEEP_UNCLAIMED_POT } from "./chain";
 import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import {
   ATTACK_COOLDOWN_MS,
