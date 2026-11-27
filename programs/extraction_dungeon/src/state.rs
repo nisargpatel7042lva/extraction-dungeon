@@ -6,6 +6,8 @@ use crate::{
 };
 
 pub const MAX_PLAYERS: usize = 4;
+/// The house treasury: when nobody escapes a run, its pot goes here (nobody earned it).
+pub const TREASURY: Pubkey = pubkey!("3fTVWVBgm8yYh8XXd7qTBCBuLNP4nMKsCAgesHHCBnA5");
 pub const START_HP: u8 = 3;
 /// Lamports moved from the wallet to the session key at join, for ER/TEE fees.
 pub const SESSION_TOPUP: u64 = 4_000_000;
@@ -25,8 +27,11 @@ pub const MONSTER_TICK_SLOTS: u64 = 70;
 /// A monster bites at most once per this many ER slots (~2 s): killing a full-health player takes
 /// ~4 s of biting, while a player kills a guardian in ~1.2 s, so a fair fight is winnable.
 pub const MONSTER_ATTACK_SLOTS: u64 = 180;
-/// How far (in steps) from home a monster will wander while chasing.
+/// A guardian locks onto a player who comes within this many steps of it.
 pub const MONSTER_LEASH: u8 = 3;
+/// Once locked on, it hunts that player anywhere within this many steps of its post (Pac-Man
+/// style), and gives up when they escape past it, die or extract.
+pub const MONSTER_CHASE: u8 = 8;
 /// How often the rollup's scheduler (a MagicBlock crank) ticks the guardians.
 pub const GUARDIAN_CRANK_MILLIS: i64 = 700;
 /// The ER validator's crank executor; scheduled instructions are signed by the PDA
@@ -137,6 +142,8 @@ pub struct Monster {
     pub alive: bool,
     /// ER slot of its last bite (cooldown).
     pub last_attack_slot: u64,
+    /// Seat it's hunting, plus one (0: none).
+    pub target: u8,
 }
 
 /// Where a dead player's sack lies. What's inside is private (the victim's `Bag.dropped`).
@@ -229,13 +236,83 @@ impl Run {
     pub fn spawn_monsters(&mut self) {
         let (vx, vy) = map::get(self.layout).chest(map::VAULT);
         for (i, x) in [vx - 1, vx + 1].into_iter().enumerate() {
-            self.monsters[i] = Monster { x, y: vy, home_x: x, home_y: vy, hp: MONSTER_HP, alive: true, last_attack_slot: 0 };
+            self.monsters[i] = Monster { x, y: vy, home_x: x, home_y: vy, hp: MONSTER_HP, alive: true, last_attack_slot: 0, target: 0 };
         }
     }
 
-    /// One step for monster `mi` toward `goal`: the open neighbouring tile that gets closest to it,
-    /// staying within its leash. Doesn't move if no step gets closer.
+    /// One step for monster `mi` along the shortest path to `goal` (breadth-first search around
+    /// walls, chests, players and the other monster), never leaving its chase radius. Stays put when
+    /// it's already next to the goal; falls back to a greedy step if the goal can't be reached.
     pub fn monster_step(&mut self, mi: usize, goal: (u8, u8)) {
+        let m = self.monsters[mi];
+        if (m.x, m.y) == goal {
+            return;
+        }
+        if let Some(d) = self.monster_path_dir(mi, goal) {
+            if let Some((nx, ny)) = map::step(m.x, m.y, d) {
+                self.monsters[mi].x = nx;
+                self.monsters[mi].y = ny;
+            }
+            return;
+        }
+        self.monster_greedy_step(mi, goal);
+    }
+
+    /// First direction of a shortest path from monster `mi` to `goal`; None if the goal is adjacent
+    /// (no move needed) or unreachable within the chase radius.
+    fn monster_path_dir(&self, mi: usize, goal: (u8, u8)) -> Option<u8> {
+        const W: usize = map::W as usize;
+        const N: usize = map::W as usize * map::H as usize;
+        const UNSEEN: u8 = u8::MAX;
+        const BLOCKED: u8 = 9;
+        let m = self.monsters[mi];
+        let home = (m.home_x, m.home_y);
+        let tiles = map::get(self.layout);
+        // first[i]: the first step (0..=3) on the way to tile i; UNSEEN or BLOCKED otherwise.
+        let mut first = [UNSEEN; N];
+        let mut queue = [0u16; N];
+        let (mut head, mut tail) = (0usize, 0usize);
+        let start = m.y as usize * W + m.x as usize;
+        first[start] = BLOCKED;
+        queue[tail] = start as u16;
+        tail += 1;
+        while head < tail {
+            let cur = queue[head] as usize;
+            head += 1;
+            let (cx, cy) = ((cur % W) as u8, (cur / W) as u8);
+            for d in 0..4u8 {
+                let Some(t) = map::step(cx, cy, d) else { continue };
+                if t.0 >= map::W || t.1 >= map::H {
+                    continue;
+                }
+                let ti = t.1 as usize * W + t.0 as usize;
+                if first[ti] != UNSEEN {
+                    continue;
+                }
+                let via = if cur == start { d } else { first[cur] };
+                if t == goal {
+                    return if cur == start { None } else { Some(via) };
+                }
+                if tiles.is_wall(t.0, t.1)
+                    || tiles.is_chest(t.0, t.1)
+                    || self.active_at(t.0, t.1).is_some()
+                    || self.monster_at(t.0, t.1).is_some()
+                    || dist(t, home) > MONSTER_CHASE
+                {
+                    first[ti] = BLOCKED;
+                    continue;
+                }
+                first[ti] = via;
+                queue[tail] = ti as u16;
+                tail += 1;
+            }
+        }
+        None
+    }
+
+    /// The open neighbouring tile that gets closest to `goal`, within the chase radius; doesn't move
+    /// if none gets closer.
+    fn monster_greedy_step(&mut self, mi: usize, goal: (u8, u8)) {
         let m = self.monsters[mi];
         let home = (m.home_x, m.home_y);
         let here = dist((m.x, m.y), goal);
@@ -246,7 +323,7 @@ impl Run {
             if tiles.is_wall(t.0, t.1) || tiles.is_chest(t.0, t.1) || self.active_at(t.0, t.1).is_some() || self.monster_at(t.0, t.1).is_some() {
                 continue;
             }
-            if dist(t, home) > MONSTER_LEASH {
+            if dist(t, home) > MONSTER_CHASE {
                 continue;
             }
             let dg = dist(t, goal);
@@ -264,9 +341,22 @@ impl Run {
     /// bite someone standing at the edge), with their distance to the monster.
     pub fn monster_target(&self, mi: usize) -> Option<(usize, u8)> {
         let m = self.monsters[mi];
+        let home = (m.home_x, m.home_y);
+        // Keep hunting the locked-on player while they're active and inside the chase radius.
+        if m.target > 0 {
+            let j = (m.target - 1) as usize;
+            if let Some(p) = self.seated().get(j) {
+                if p.active() && dist((p.x, p.y), home) <= MONSTER_CHASE {
+                    return Some((j, dist((p.x, p.y), (m.x, m.y))));
+                }
+            }
+        }
+        // Otherwise lock onto the nearest active player within sight (MONSTER_LEASH of it, or of its
+        // post) and inside the chase radius.
         let mut best: Option<(usize, u8)> = None;
         for (j, p) in self.seated().iter().enumerate() {
-            if !p.active() || dist((p.x, p.y), (m.home_x, m.home_y)) > MONSTER_LEASH + 1 {
+            let near = dist((p.x, p.y), (m.x, m.y)) <= MONSTER_LEASH || dist((p.x, p.y), home) <= MONSTER_LEASH + 1;
+            if !p.active() || !near || dist((p.x, p.y), home) > MONSTER_CHASE {
                 continue;
             }
             let d = dist((p.x, p.y), (m.x, m.y));
@@ -306,7 +396,7 @@ impl Run {
     /// host never takes a cut, so ending or abandoning a run can't profit them.
     /// - Extracted players share the pot in proportion to bag points.
     /// - Extracted with empty bags only: equal split.
-    /// - Nobody extracted: every seat gets its stake back.
+    /// - Nobody extracted: nobody gets anything; `settle_run` sends the pot to the treasury.
     /// Integer dust goes to the best-scoring extracted player, so payouts sum to the pot exactly.
     pub fn payouts(&self, points: &[u16; MAX_PLAYERS]) -> [u64; MAX_PLAYERS] {
         let mut out = [0u64; MAX_PLAYERS];
@@ -318,11 +408,6 @@ impl Run {
         let pot = self.pot as u128;
         let n_ext = seated.iter().filter(|p| p.extracted).count() as u128;
         if n_ext == 0 {
-            let each = pot / n as u128;
-            for o in out.iter_mut().take(n) {
-                *o = each as u64;
-            }
-            out[0] += (pot - each * n as u128) as u64;
             return out;
         }
         let total: u128 = seated
@@ -406,9 +491,9 @@ mod tests {
     }
 
     #[test]
-    fn nobody_extracted_refunds_every_stake() {
+    fn nobody_extracted_pays_no_player() {
         let (r, p) = run_with(250, &[(false, 3), (false, 0)]);
-        assert_eq!(conserved(&r, &p), [125, 125, 0, 0]);
+        assert_eq!(r.payouts(&p), [0, 0, 0, 0], "the whole pot is left for the treasury");
     }
 
     #[test]

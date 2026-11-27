@@ -1236,6 +1236,14 @@ export type ExtractionDungeon = {
               }
             ]
           }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Receives the pot when nobody escaped."
+          ],
+          "writable": true,
+          "address": "3fTVWVBgm8yYh8XXd7qTBCBuLNP4nMKsCAgesHHCBnA5"
         }
       ],
       "args": []
@@ -1716,6 +1724,13 @@ export type ExtractionDungeon = {
               "ER slot of its last bite (cooldown)."
             ],
             "type": "u64"
+          },
+          {
+            "name": "target",
+            "docs": [
+              "Seat it's hunting, plus one (0: none)."
+            ],
+            "type": "u8"
           }
         ]
       }
@@ -1952,6 +1967,13 @@ export type ExtractionDungeon = {
                 4
               ]
             }
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "Lamports sent to the treasury (unclaimed pot)."
+            ],
+            "type": "u64"
           }
         ]
       }

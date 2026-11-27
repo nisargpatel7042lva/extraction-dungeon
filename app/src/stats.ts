@@ -96,12 +96,12 @@ async function loadBagPoints(): Promise<Map<string, number>> {
 }
 
 /** Mirrors Run::payouts: escaped players split the pot by loot (equal if nobody looted);
- *  if nobody escaped, every seat gets its stake back. Rounding dust is ignored here. */
+ *  if nobody escaped, nobody is paid (the pot goes to the treasury). Rounding dust is ignored here. */
 function payouts(pot: number, seats: { extracted: boolean }[], points: number[]): number[] {
   const out = seats.map(() => 0);
   const esc = seats.map((p, i) => ({ p, i })).filter(({ p }) => p.extracted);
   if (!seats.length) return out;
-  if (!esc.length) return out.map(() => Math.floor(pot / seats.length));
+  if (!esc.length) return out;
   const total = esc.reduce((a, { i }) => a + points[i], 0);
   for (const { i } of esc) out[i] = total === 0 ? Math.floor(pot / esc.length) : Math.floor((pot * points[i]) / total);
   return out;
@@ -193,7 +193,10 @@ async function render() {
   const wallets = new Set(full.flatMap((r) => r.full!.wallets));
   const seats = started.reduce((a, r) => a + r.players, 0);
   const staked = started.reduce((a, r) => a + r.entry * r.players, 0);
-  const paid = full.filter((r) => r.full!.settled && r.status === 2).reduce((a, r) => a + r.pot, 0);
+  const settled = full.filter((r) => r.full!.settled && r.status === 2);
+  const unclaimed = settled.filter((r) => !r.full!.seats.some((s) => s.extracted));
+  const paid = settled.filter((r) => r.full!.seats.some((s) => s.extracted)).reduce((a, r) => a + r.pot, 0);
+  const lost = unclaimed.reduce((a, r) => a + r.pot, 0);
   const refunded = cancelled.reduce((a, r) => a + r.entry * r.players, 0);
   const sum = (k: "escaped" | "slain" | "kills" | "chests") => full.filter((r) => r.status === 2).reduce((a, r) => a + r.full![k], 0);
 
@@ -206,6 +209,7 @@ async function render() {
     tile("UNIQUE WALLETS", String(wallets.size), "var(--pink)"),
     tile("SOL STAKED", sol(staked), "var(--gold)"),
     tile("SOL PAID OUT", sol(paid), "var(--green)"),
+    tile("SOL LOST TO THE DUNGEON", `${sol(lost)} · ${unclaimed.length} runs`, "var(--red)"),
     tile("ESCAPES", String(sum("escaped")), "var(--green)"),
     tile("KILLS", String(sum("kills")), "var(--red)"),
     tile("CHESTS OPENED (VRF)", String(sum("chests")), "var(--gold)"),

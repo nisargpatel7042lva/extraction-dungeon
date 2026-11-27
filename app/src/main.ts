@@ -1116,9 +1116,8 @@ async function showEnded() {
   const extracted = s.players.slice(0, s.playerCount).map((p, i) => ({ p, i })).filter(({ p }) => p.extracted);
   const total = extracted.reduce((a, { i }) => a + points[i], 0);
   const pot = Number(s.pot.toString());
-  // Mirrors Run::payouts: extracted players split by loot; if nobody got out, every stake goes back.
+  // Mirrors Run::payouts: extracted players split by loot; if nobody got out, nobody is paid.
   const share = (i: number) => {
-    if (!extracted.length) return Math.floor(pot / s.playerCount);
     if (!s.players[i].extracted) return 0;
     return total === 0 ? Math.floor(pot / extracted.length) : Math.floor((pot * points[i]) / total);
   };
@@ -1133,7 +1132,7 @@ async function showEnded() {
   }
   const practice = pot === 0;
   const title = !best
-    ? { t: "GAME OVER", cls: "neon-red", sub: practice ? "Nobody made it out" : "Nobody made it out: every stake is refunded" }
+    ? { t: "GAME OVER", cls: "neon-red", sub: practice ? "Nobody made it out" : "Nobody made it out: the dungeon keeps the pot" }
     : iWon
       ? { t: iTopped ? (practice ? "STAGE CLEAR!" : "YOU WIN!") : "YOU ESCAPED!", cls: "neon-gold", sub: practice ? `Practice run · ${points[me]} pts banked` : "Extracted players split the pot by loot" }
       : me >= 0

@@ -11,7 +11,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "chest_closed",
     title: "2. Loot chests",
-    body: "Move with <kbd>WASD</kbd>/<kbd>arrow keys</kbd>, or the on-screen pad on a phone. Walk into a chest to open it, and MagicBlock VRF rolls the loot: <b>common 1 pt</b> (50%), <b>rare 3 pts</b> (30%), <b>legendary 8 pts</b> (10%), and 1 chest in 10 is a <b>mimic</b> that bites for 1 heart and gives nothing. The golden <b>Vault</b> in the middle never rolls common or a mimic, but two <b>Vault Guardians</b> stand beside it: they chase anyone who comes near and bite. Three hits kill one, for a +2 bounty.",
+    body: "Move with <kbd>WASD</kbd>/<kbd>arrow keys</kbd>, or the on-screen pad on a phone. Walk into a chest to open it, and MagicBlock VRF rolls the loot: <b>common 1 pt</b> (50%), <b>rare 3 pts</b> (30%), <b>legendary 8 pts</b> (10%), and 1 chest in 10 is a <b>mimic</b> that bites for 1 heart and gives nothing. The golden <b>Vault</b> in the middle never rolls common or a mimic, but two <b>Vault Guardians</b> stand beside it: once one spots you it <b>hunts you around the dungeon</b> (like a Pac-Man ghost) and bites, until you get far enough from the Vault. Three hits kill one, for a +2 bounty.",
   },
   {
     img: "hero1",
@@ -31,7 +31,7 @@ const STEPS: { img: string; title: string; body: string }[] = [
   {
     img: "chest_open",
     title: "6. Get paid",
-    body: "When the run ends, the pot is split between everyone who got out, <b>in proportion to their loot points</b>. Press <b>Settle payouts</b> to send it. If nobody gets out, every stake is refunded.",
+    body: "When the run ends, the pot is split between everyone who got out, <b>in proportion to their loot points</b>. Press <b>Settle payouts</b> to send it. If nobody gets out, the dungeon keeps the pot.",
   },
 ];
 

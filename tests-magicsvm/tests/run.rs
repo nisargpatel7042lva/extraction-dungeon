@@ -12,7 +12,7 @@ use {
         state::{
             Bag, ChestState, Run, RunStatus, ATTACK_COOLDOWN_SLOTS, EXTRACT_CHANNEL_SLOTS, SESSION_TOPUP, START_HP, TIER_COMMON,
             TIER_LEGENDARY, TIER_MIMIC, TIER_RARE, MONSTER_ATTACK_SLOTS, MONSTER_BOUNTY, MONSTER_HP, MONSTER_LEASH,
-            MONSTER_TICK_SLOTS,
+            MONSTER_TICK_SLOTS, MONSTER_CHASE, dist, TREASURY,
         },
         BAG_SEED, LOBBY_TIMEOUT_SECS, RUN_SEED, VAULT_SEED,
     },
@@ -428,7 +428,7 @@ impl World {
 
     fn settle(&mut self) -> Result<(), String> {
         let mut i = ix(self.program, ixs::SettleRun {}, acc::SettleRun {
-            caller: pk(&self.authority), run: self.run, vault: self.vault,
+            caller: pk(&self.authority), run: self.run, vault: self.vault, treasury: TREASURY,
         });
         for w in &self.wallets {
             i.accounts.push(AccountMeta::new(pk(w), false));
@@ -667,7 +667,7 @@ fn bags_cannot_be_swapped_between_seats() {
 }
 
 #[test]
-fn timer_runs_out_with_nobody_out_and_every_stake_is_refunded() {
+fn timer_runs_out_with_nobody_out_and_the_pot_goes_to_the_treasury() {
     let mut w = World::new(2);
     w.start();
     let s0 = w.sessions[0].insecure_clone();
@@ -676,10 +676,12 @@ fn timer_runs_out_with_nobody_out_and_every_stake_is_refunded() {
     assert!(w.act(0, ixs::MovePlayer { dir: DOWN }).is_err(), "time is up");
     w.end_as(&s0).unwrap();
     let host_before = balance(&w.svm, Base, pk(&w.authority));
+    let treasury_before = balance(&w.svm, Base, TREASURY);
     let before: Vec<u64> = w.wallets.iter().map(|k| balance(&w.svm, Base, pk(k))).collect();
     w.settle().unwrap();
     let gained: Vec<u64> = w.wallets.iter().zip(&before).map(|(k, b)| balance(&w.svm, Base, pk(k)) - b).collect();
-    assert_eq!(gained, vec![ENTRY, ENTRY], "nobody got out: stakes go back");
+    assert_eq!(gained, vec![0, 0], "nobody got out: no player is paid");
+    assert_eq!(balance(&w.svm, Base, TREASURY) - treasury_before, 2 * ENTRY, "the unclaimed pot goes to the treasury");
     assert!(balance(&w.svm, Base, pk(&w.authority)) <= host_before, "the host takes no cut");
 }
 
@@ -930,4 +932,48 @@ fn a_tick_after_the_timer_is_a_harmless_no_op() {
     w.tick(0).expect("no-op, not an error, so the crank's last iterations don't fail");
     let after = w.state(Ephemeral).monsters;
     assert_eq!(before.map(|g| (g.x, g.y, g.hp)), after.map(|g| (g.x, g.y, g.hp)));
+}
+
+#[test]
+fn a_guardian_locks_on_and_hunts_you_until_you_escape_its_radius() {
+    let mut w = World::new(1);
+    w.start();
+    let g = w.state(Ephemeral).monsters[0];
+    let home = (g.home_x, g.home_y);
+    let other = w.state(Ephemeral).monsters[1];
+    // Step into its sight: it locks on.
+    let dirs = route(w.pos(0), &[(g.x - 2, g.y)], &w.others(0));
+    w.walk(0, &dirs);
+    w.tick(0).unwrap();
+    assert_eq!(w.state(Ephemeral).monsters[0].target, 1, "locked onto seat 0");
+    // Run to a tile 6 steps from its post: far beyond sight, inside the chase radius, and away from
+    // the other guardian.
+    let open = |x: u8, y: u8| !m().is_wall(x, y) && !m().is_chest(x, y);
+    let far = (0..map::H)
+        .flat_map(|y| (0..map::W).map(move |x| (x, y)))
+        .find(|&(x, y)| open(x, y) && x < home.0 && dist((x, y), home) == 6 && dist((x, y), (other.home_x, other.home_y)) > MONSTER_CHASE / 2 + 2)
+        .expect("a tile 6 steps from the post");
+    let dirs = route(w.pos(0), &[far], &w.others(0));
+    w.walk(0, &dirs);
+    for _ in 0..8 {
+        w.advance_slots(MONSTER_TICK_SLOTS);
+        w.tick(0).unwrap();
+    }
+    let m0 = w.state(Ephemeral).monsters[0];
+    let me = w.pos(0);
+    assert_eq!(m0.target, 1, "still hunting");
+    assert!(dist((m0.x, m0.y), home) > MONSTER_LEASH, "followed you past its old leash: at {:?}", (m0.x, m0.y));
+    assert!(dist((m0.x, m0.y), me) <= 2, "caught up with you: guardian {:?}, you {:?}", (m0.x, m0.y), me);
+    // Escape past the chase radius: it gives up and walks home.
+    let corner = (1u8, 1u8);
+    assert!(dist(corner, home) > MONSTER_CHASE);
+    let dirs = route(w.pos(0), &[corner], &w.others(0));
+    w.walk(0, &dirs);
+    for _ in 0..(MONSTER_CHASE as usize + 6) {
+        w.advance_slots(MONSTER_TICK_SLOTS);
+        w.tick(0).unwrap();
+    }
+    let m0 = w.state(Ephemeral).monsters[0];
+    assert_eq!(m0.target, 0, "gave up");
+    assert_eq!((m0.x, m0.y), home, "back at its post");
 }

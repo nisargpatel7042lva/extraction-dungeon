@@ -319,7 +319,9 @@ pub mod extraction_dungeon {
             if !m.alive {
                 continue;
             }
-            match run.monster_target(mi) {
+            let target = run.monster_target(mi);
+            run.monsters[mi].target = target.map_or(0, |(j, _)| j as u8 + 1);
+            match target {
                 Some((j, 1)) => {
                     if m.last_attack_slot == 0 || slot >= m.last_attack_slot.saturating_add(MONSTER_ATTACK_SLOTS) {
                         run.monsters[mi].last_attack_slot = slot;
@@ -560,15 +562,23 @@ pub mod extraction_dungeon {
         }
         let shares = run.payouts(&points);
         let vault = ctx.accounts.vault.to_account_info();
+        let mut paid = 0u64;
         for (i, w) in wallets.iter().enumerate() {
             require_keys_eq!(w.key(), run.players[i].wallet, DungeonError::WalletMismatch);
             if shares[i] > 0 {
                 vault.sub_lamports(shares[i])?;
                 w.add_lamports(shares[i])?;
+                paid = paid.checked_add(shares[i]).ok_or(DungeonError::Overflow)?;
             }
         }
+        // Whatever no escaped player earned (the whole pot when nobody got out) goes to the house.
+        let to_treasury = run.pot.checked_sub(paid).ok_or(DungeonError::Overflow)?;
+        if to_treasury > 0 {
+            vault.sub_lamports(to_treasury)?;
+            ctx.accounts.treasury.add_lamports(to_treasury)?;
+        }
         run.settled = true;
-        emit!(RunSettled { run: run.key(), shares, points });
+        emit!(RunSettled { run: run.key(), shares, points, treasury: to_treasury });
         Ok(())
     }
 
@@ -629,6 +639,8 @@ pub struct RunSettled {
     pub run: Pubkey,
     pub shares: [u64; MAX_PLAYERS],
     pub points: [u16; MAX_PLAYERS],
+    /// Lamports sent to the treasury (unclaimed pot).
+    pub treasury: u64,
 }
 
 #[derive(Accounts)]
@@ -805,6 +817,9 @@ pub struct SettleRun<'info> {
     pub run: Account<'info, Run>,
     #[account(mut, seeds = [VAULT_SEED, run.key().as_ref()], bump = run.vault_bump)]
     pub vault: Account<'info, Vault>,
+    /// Receives the pot when nobody escaped.
+    #[account(mut, address = TREASURY)]
+    pub treasury: SystemAccount<'info>,
 }
 
 #[derive(Accounts)]

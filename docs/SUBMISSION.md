@@ -40,8 +40,8 @@ interrupts. Get out before the timer ends, or lose everything.
 
 When the run ends, the run and every bag are committed back to Solana, the bags are revealed, and the vault pays extracted
 players in proportion to their loot. The rules protect the stake: nobody (the host included) can end a run early, the
-host never takes a cut, if nobody escapes every stake is refunded, and a lobby that never starts can be cancelled with full
-refunds.
+host never takes a cut from escaped players, if nobody escapes the pot goes to the game's treasury, and a lobby that never
+starts can be cancelled with full refunds.
 
 It's Entertainment Finance in a small package: real stakes, real risk (stay greedy and someone takes your bag), hidden
 information (you never know whether that player is worth killing), and a payout settled by the program, not a server.
@@ -75,9 +75,9 @@ opened, maps played, a hall of fame leaderboard and recent games with Explorer l
 MagicBlock TEE rollup). No server and no analytics service: anyone can verify the numbers.
 
 **What's tested**
-- 9 unit tests: mimic odds, payout math (proportional split, equal split, refunds when nobody escapes, dust to the best bag), tier
+- 9 unit tests: mimic odds, payout math (proportional split, equal split, the pot to the treasury when nobody escapes, dust to the best bag), tier
   tables, and every map being fully connected.
-- 28 end-to-end scenarios in MagicSVM (base layer + ER + VRF + permission program), including "opponents can't read each
+- 29 end-to-end scenarios in MagicSVM (base layer + ER + VRF + permission program), including "opponents can't read each
   other's bags", "the host can't end a run early to grab the pot", lobby cancel refunds, the attack cooldown, locked
   exits, channeled extraction, a loot-and-extract run on every map, mimics that bite and can kill, and Vault
   Guardians that block the Vault, chase, bite on a rate-limited tick, and pay a private bounty when slain.
